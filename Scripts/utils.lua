@@ -30,14 +30,26 @@ function utils.GetPlayerPawn()
     return pawn
 end
 
---- Show a notification message to the player
+--- Show a notification message to the player using the game's toast system
 ---@param message string The message to display
 ---@param config table The mod config (needs config.Notify)
 function utils.Notify(message, config)
     if not config.Notify then return end
-    -- Console output (always works)
+    -- Console output
     print(string.format("[QuickStack] %s\n", message))
-    -- TODO: Replace with game's native on-screen notification after Task 4 discovery
+    -- In-game toast via UWEGameplayMessageBPLibrary::NotifyLocalPlayerSimple
+    local ok, err = pcall(function()
+        local msgLib = StaticFindObject("/Script/UWEGameplayMessageRuntime.Default__UWEGameplayMessageBPLibrary")
+        if msgLib then
+            local pawn = utils.GetPlayerPawn()
+            if pawn then
+                msgLib:NotifyLocalPlayerSimple(pawn, { TagName = FName("Notification.Info") }, FText(message))
+            end
+        end
+    end)
+    if not ok then
+        print(string.format("[QuickStack] Toast failed: %s\n", tostring(err)))
+    end
 end
 
 --- Convert radius in meters to Unreal units
