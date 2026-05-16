@@ -1,0 +1,4 @@
+keybind=N
+radius=15
+cooldown=1.0
+notify=true
