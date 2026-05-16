@@ -2,6 +2,7 @@
 -- Automatically stacks inventory items into nearby matching containers
 
 local config = require("config")
+local utils = require("utils")
 
 print("[QuickStack] Mod loaded\n")
 
@@ -34,7 +35,11 @@ RegisterKeyBind(bindKey, function()
         end
         lastActivation = now
 
-        print("[QuickStack] Quick Stack activated!\n")
-        -- TODO: Core quick-stack logic goes here (Task 6)
+        local pawn = utils.GetPlayerPawn()
+        if pawn then
+            local loc = pawn:K2_GetActorLocation()
+            print(string.format("[QuickStack] Player at: X=%.1f Y=%.1f Z=%.1f\n", loc.X, loc.Y, loc.Z))
+            utils.Notify("Quick Stack activated!", config)
+        end
     end)
 end)
