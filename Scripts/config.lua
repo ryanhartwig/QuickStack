@@ -2,6 +2,7 @@ local config = {}
 
 -- Default values
 config.Keybind = "N"
+config.KeybindOpen = "F"
 config.Radius = 25
 config.Cooldown = 1.0
 config.Notify = true
@@ -26,6 +27,8 @@ local function loadConfig()
                 value = value:match("^%s*(.-)%s*$") -- trim whitespace
                 if key == "keybind" then
                     config.Keybind = value:upper()
+                elseif key == "keybind_open" then
+                    config.KeybindOpen = value:upper()
                 elseif key == "radius" then
                     config.Radius = tonumber(value) or 15
                 elseif key == "cooldown" then
@@ -38,8 +41,8 @@ local function loadConfig()
     end
 
     file:close()
-    print(string.format("[QuickStack] Config loaded: keybind=%s, radius=%d, cooldown=%.1f, notify=%s\n",
-        config.Keybind, config.Radius, config.Cooldown, tostring(config.Notify)))
+    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s\n",
+        config.Keybind, config.KeybindOpen, config.Radius, config.Cooldown, tostring(config.Notify)))
 end
 
 loadConfig()

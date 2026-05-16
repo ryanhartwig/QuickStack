@@ -20,7 +20,8 @@ Edit `Mods/QuickStack/config.txt`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| keybind | N | Key to trigger quick-stack |
+| keybind | N | Key to trigger quick-stack (nearby containers) |
+| keybind_open | F | Key to quick-stack into the currently open container |
 | radius | 25 | Meters to scan for containers |
 | cooldown | 1.0 | Seconds between activations |
 | notify | true | Show on-screen notifications |

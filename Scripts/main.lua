@@ -271,8 +271,14 @@ RegisterKeyBind(bindKey, function()
     end)
 end)
 
--- Keybind: F for Quick Dump (into open container)
-RegisterKeyBind(Key.F, function()
+-- Keybind: F for Quick Stack into open container
+local bindKeyOpen = keyMap[config.KeybindOpen]
+if not bindKeyOpen then
+    print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to F\n", config.KeybindOpen))
+    bindKeyOpen = Key.F
+end
+
+RegisterKeyBind(bindKeyOpen, function()
     ExecuteInGameThread(function()
         local now = os.clock()
         if now - lastActivation < config.Cooldown then

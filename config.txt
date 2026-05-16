@@ -1,4 +1,5 @@
 keybind=N
+keybind_open=F
 radius=25
 cooldown=1.0
 notify=true
