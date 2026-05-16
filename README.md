@@ -3,7 +3,7 @@
 A Subnautica 2 mod for fast inventory management:
 
 - **Press N** — automatically sort items into all nearby containers that already hold matching items
-- **Press F** (while viewing a container) — quick-stack matching items into that specific container
+- **Press G** (while viewing a container) — quick-stack matching items into that specific container
 
 Works with all container types. Multiplayer-safe.
 
@@ -26,7 +26,7 @@ Edit `Mods/QuickStack/config.txt`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | keybind | N | Key to trigger quick-stack (nearby containers) |
-| keybind_open | F | Key to quick-stack into the currently open container |
+| keybind_open | G | Key to quick-stack into the currently open container |
 | radius | 25 | Meters to scan for containers |
 | cooldown | 1.0 | Seconds between activations |
 | notify | true | Show on-screen notifications |

@@ -7,7 +7,7 @@ local UEHelpers = require("UEHelpers")
 local config = require("config")
 local utils = require("utils")
 
-local VERSION = "1.2.1"
+local VERSION = "1.2.2"
 -- N: Quick Stack to nearby containers (matching items only)
 -- F: Quick Stack into currently open container (matching items only)
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
