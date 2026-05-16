@@ -11,7 +11,7 @@ A Subnautica 2 mod that adds a "Quick Stack" keybind (default: N) to automatical
 
 1. Install UE4SS for Subnautica 2
 2. Download the latest release from [Releases](../../releases)
-3. Extract the `QuickStack` folder into `Subnautica2/Subnautica2/Binaries/Win64/Mods/`
+3. Extract the `QuickStack` folder into `Subnautica2/Subnautica2/Binaries/Win64/ue4ss/Mods/`
 4. Launch the game
 
 ## Configuration
