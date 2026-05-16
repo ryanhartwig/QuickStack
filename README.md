@@ -21,7 +21,7 @@ Edit `Mods/QuickStack/config.txt`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | keybind | N | Key to trigger quick-stack |
-| radius | 15 | Meters to scan for containers |
+| radius | 25 | Meters to scan for containers |
 | cooldown | 1.0 | Seconds between activations |
 | notify | true | Show on-screen notifications |
 

@@ -2,7 +2,7 @@ local config = {}
 
 -- Default values
 config.Keybind = "N"
-config.Radius = 15
+config.Radius = 25
 config.Cooldown = 1.0
 config.Notify = true
 
