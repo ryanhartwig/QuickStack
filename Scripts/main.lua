@@ -207,19 +207,44 @@ local function doQuickStack()
 
     local actualTransferred, numContainers, someFull = transferToLockers(playerInv, playerItems, nearbyLockers)
 
-    local itm = actualTransferred == 1 and "item" or "items"
-    local ctr = numContainers == 1 and "container" or "containers"
+    -- If we got 0 actual transfers but attempted some, the server may not have
+    -- replicated yet (non-host clients). Delay and re-check.
+    if actualTransferred <= 0 and numContainers > 0 then
+        ExecuteWithDelay(500, function()
+            ExecuteInGameThread(function()
+                local delayedItems = playerInv:GetItems()
+                local delayedCount = #playerItems - #delayedItems
+                local itm = delayedCount == 1 and "item" or "items"
+                local ctr = numContainers == 1 and "container" or "containers"
 
-    if actualTransferred <= 0 and someFull then
-        utils.Notify("No matching containers nearby (some full)", config)
-    elseif actualTransferred <= 0 then
-        utils.Notify("No matching containers nearby", config)
-    elseif someFull then
-        utils.Notify(string.format("Quick Stacked %d %s to %d %s (some full)",
-            actualTransferred, itm, numContainers, ctr), config)
+                if delayedCount <= 0 and someFull then
+                    utils.Notify("No matching containers nearby (some full)", config)
+                elseif delayedCount <= 0 then
+                    utils.Notify("No matching containers nearby", config)
+                elseif someFull then
+                    utils.Notify(string.format("Quick Stacked %d %s to %d %s (some full)",
+                        delayedCount, itm, numContainers, ctr), config)
+                else
+                    utils.Notify(string.format("Quick Stacked %d %s to %d %s",
+                        delayedCount, itm, numContainers, ctr), config)
+                end
+            end)
+        end)
     else
-        utils.Notify(string.format("Quick Stacked %d %s to %d %s",
-            actualTransferred, itm, numContainers, ctr), config)
+        local itm = actualTransferred == 1 and "item" or "items"
+        local ctr = numContainers == 1 and "container" or "containers"
+
+        if actualTransferred <= 0 and someFull then
+            utils.Notify("No matching containers nearby (some full)", config)
+        elseif actualTransferred <= 0 then
+            utils.Notify("No matching containers nearby", config)
+        elseif someFull then
+            utils.Notify(string.format("Quick Stacked %d %s to %d %s (some full)",
+                actualTransferred, itm, numContainers, ctr), config)
+        else
+            utils.Notify(string.format("Quick Stacked %d %s to %d %s",
+                actualTransferred, itm, numContainers, ctr), config)
+        end
     end
 end
 
