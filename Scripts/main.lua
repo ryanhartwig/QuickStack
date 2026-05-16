@@ -1,12 +1,13 @@
 -- QuickStack Mod for Subnautica 2
 -- Press N to auto-stack inventory items into nearby matching containers
--- Press F to dump all items into the currently open container
+-- Press F to quick-stack into the currently open container
 
 local UEHelpers = require("UEHelpers")
+
 local config = require("config")
 local utils = require("utils")
 
-local VERSION = "1.1.0"
+local VERSION = "1.2.0"
 -- N: Quick Stack to nearby containers (matching items only)
 -- F: Quick Stack into currently open container (matching items only)
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
@@ -161,27 +162,40 @@ local function doQuickStack()
         return
     end
 
-    local lockers = FindAllOf("SN2Locker")
-    if not lockers then
+    local allInvComps = FindAllOf("UWEInventoryComponent")
+    if not allInvComps then
         utils.Notify("No matching containers nearby", config)
         return
     end
 
     local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
+    local playerInvId = playerInv.InventoryId
     local nearbyLockers = {}
-    for _, locker in ipairs(lockers) do
-        if locker:IsValid() then
-            local dist = utils.GetDistance(pawn, locker)
-            if dist <= radiusUnits then
-                local inv = locker.Inventory
-                if inv and inv:IsValid() then
-                    table.insert(nearbyLockers, {
-                        locker = locker,
-                        inventory = inv,
-                        inventoryId = inv.InventoryId,
-                    })
+    for _, inv in ipairs(allInvComps) do
+        if inv:IsValid() and inv.InventoryId ~= playerInvId then
+            local ok, outer = pcall(function() return inv:GetOuter() end)
+            if ok and outer and outer:IsValid() then
+                -- Skip player characters (don't stack into other players' inventories)
+                local ok1b, isPlayer = pcall(function()
+                    return outer:IsA(StaticFindObject("/Script/Subnautica2.SN2PlayerCharacter"))
+                end)
+                if ok1b and isPlayer then goto continue end
+
+                local ok2, outerLoc = pcall(function() return outer:K2_GetActorLocation() end)
+                if ok2 then
+                    local dx = outerLoc.X - playerLoc.X
+                    local dy = outerLoc.Y - playerLoc.Y
+                    local dz = outerLoc.Z - playerLoc.Z
+                    local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+                    if dist <= radiusUnits then
+                        table.insert(nearbyLockers, {
+                            inventory = inv,
+                            inventoryId = inv.InventoryId,
+                        })
+                    end
                 end
+                ::continue::
             end
         end
     end
