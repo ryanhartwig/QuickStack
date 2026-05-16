@@ -163,18 +163,22 @@ local function doQuickStack()
         end
     end
 
+    -- Count actual transfers by comparing inventory before/after
+    local afterItems = playerInv:GetItems()
+    local actualTransferred = #playerItems - #afterItems
+
     -- Report results
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
 
-    if totalTransferred == 0 then
+    if actualTransferred <= 0 then
         utils.Notify("No matching containers nearby", config)
     elseif someFull then
         utils.Notify(string.format("Quick Stacked %d items to %d containers (some full)",
-            totalTransferred, numContainers), config)
+            actualTransferred, numContainers), config)
     else
         utils.Notify(string.format("Quick Stacked %d items to %d containers",
-            totalTransferred, numContainers), config)
+            actualTransferred, numContainers), config)
     end
 end
 
