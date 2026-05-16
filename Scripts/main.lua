@@ -7,6 +7,8 @@ local config = require("config")
 local utils = require("utils")
 
 local VERSION = "1.1.0"
+-- N: Quick Stack to nearby containers (matching items only)
+-- F: Quick Stack into currently open container (matching items only)
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Map config keybind string to UE4SS Key constant
