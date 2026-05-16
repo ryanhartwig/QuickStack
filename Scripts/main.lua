@@ -32,16 +32,25 @@ local lastActivation = 0
 
 --- Get the inventory component of the currently open container (if any)
 local function getOpenContainerInventory()
-    local screenVMs = FindAllOf("SN2InventoryScreenViewModel")
-    if not screenVMs then return nil end
+    -- Find the active inventory tab widget
+    local tabs = FindAllOf("WBP_TabInventory_C")
+    if not tabs then return nil end
 
-    for _, vm in ipairs(screenVMs) do
-        if vm:IsValid() then
-            local ok, otherInv = pcall(function() return vm.OtherInventory end)
-            if ok and otherInv and otherInv:IsValid() then
-                local ok2, invComp = pcall(function() return otherInv.InventoryComponent end)
-                if ok2 and invComp and invComp:IsValid() then
-                    return invComp
+    for _, tab in ipairs(tabs) do
+        if tab:IsValid() then
+            -- Check if this tab is currently active/visible
+            local ok, active = pcall(function() return tab:IsActivated() end)
+            if ok and active then
+                -- Get the screen view model from the active tab
+                local ok2, vm = pcall(function() return tab.ViewModel end)
+                if ok2 and vm and vm:IsValid() then
+                    local ok3, otherInv = pcall(function() return vm.OtherInventory end)
+                    if ok3 and otherInv and otherInv:IsValid() then
+                        local ok4, invComp = pcall(function() return otherInv.InventoryComponent end)
+                        if ok4 and invComp and invComp:IsValid() then
+                            return invComp
+                        end
+                    end
                 end
             end
         end
@@ -253,9 +262,6 @@ local function doQuickStackOpen()
 
     if actualTransferred <= 0 then
         utils.Notify("No matching items for this container", config)
-    else
-        local itm = actualTransferred == 1 and "item" or "items"
-        utils.Notify(string.format("Quick Stacked %d %s into container", actualTransferred, itm), config)
     end
 end
 
