@@ -171,14 +171,16 @@ local function doQuickStack()
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
 
+    local ctr = numContainers == 1 and "container" or "containers"
+
     if actualTransferred <= 0 then
         utils.Notify("No matching containers nearby", config)
     elseif someFull then
-        utils.Notify(string.format("Quick Stacked %d items to %d containers (some full)",
-            actualTransferred, numContainers), config)
+        utils.Notify(string.format("Quick Stacked %d items to %d %s (some full)",
+            actualTransferred, numContainers, ctr), config)
     else
-        utils.Notify(string.format("Quick Stacked %d items to %d containers",
-            actualTransferred, numContainers), config)
+        utils.Notify(string.format("Quick Stacked %d items to %d %s",
+            actualTransferred, numContainers, ctr), config)
     end
 end
 
