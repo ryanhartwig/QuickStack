@@ -5,7 +5,7 @@ local UEHelpers = require("UEHelpers")
 local config = require("config")
 local utils = require("utils")
 
-local VERSION = "0.2.0-dev"
+local VERSION = "1.0.0"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Map config keybind string to UE4SS Key constant
