@@ -17,3 +17,6 @@ keep_types=
 # Example: label_prefix=%qs
 # Then label "%qs Titanium" would match, but "Titanium" alone would not
 label_prefix=
+
+# Auto-swap batteries/power cells with higher-charged ones from nearby chargers
+battery_swap=true

@@ -10,6 +10,7 @@ config.StackTools = false
 config.StackEquipment = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
+config.BatterySwap = true
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -59,16 +60,18 @@ local function loadConfig()
                     config.KeepTypes = parseList(value)
                 elseif key == "label_prefix" then
                     config.LabelPrefix = value
+                elseif key == "battery_swap" then
+                    config.BatterySwap = (value == "true")
                 end
             end
         end
     end
 
     file:close()
-    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items\n",
+    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items, battery_swap=%s\n",
         config.Keybind, config.KeybindOpen, config.Radius, config.Cooldown,
         tostring(config.Notify), tostring(config.StackTools), tostring(config.StackEquipment),
-        #config.KeepTypes))
+        #config.KeepTypes, tostring(config.BatterySwap)))
 end
 
 loadConfig()
