@@ -339,58 +339,76 @@ local function doBatterySwap(pawn, playerInv)
 
     if #playerBatteries == 0 then return 0 end
 
-    local swapCount = 0
-
-    for _, playerBat in ipairs(playerBatteries) do
-        -- Skip if already fully charged
-        if playerBat.chargePercent >= 0.99 then goto nextBattery end
-
-        -- Find the best replacement in chargers (same type, higher charge)
-        local bestChargerInv = nil
-        local bestChargerItem = nil
-        local bestChargerCharge = playerBat.charge
-
-        for _, chargerInv in ipairs(chargerInvs) do
-            local ok, chargerItems = pcall(function() return chargerInv:GetItems() end)
-            if ok and chargerItems then
-                for _, cItem in ipairs(chargerItems) do
-                    local cs = cItem:get()
-                    if cs.ItemType then
-                        local ok2, cTypeName = pcall(function() return cs.ItemType:GetFName():ToString() end)
-                        if ok2 and cTypeName == playerBat.typeName then
-                            local cCurrent, cMax = readCharge(cs)
-                            if cCurrent and cCurrent > bestChargerCharge then
-                                bestChargerCharge = cCurrent
-                                bestChargerItem = cs
-                                bestChargerInv = chargerInv
-                            end
+    -- Snapshot all charger batteries upfront (avoids stale GetItems after swaps)
+    local chargerBatteries = {} -- { typeName, charge, itemId, inventoryId, chargerInv, used }
+    for _, chargerInv in ipairs(chargerInvs) do
+        local ok, chargerItems = pcall(function() return chargerInv:GetItems() end)
+        if ok and chargerItems then
+            for _, cItem in ipairs(chargerItems) do
+                local cs = cItem:get()
+                if cs.ItemType then
+                    local ok2, cTypeName = pcall(function() return cs.ItemType:GetFName():ToString() end)
+                    if ok2 and isBatteryType(cTypeName) then
+                        local cCurrent, cMax = readCharge(cs)
+                        if cCurrent and cMax then
+                            table.insert(chargerBatteries, {
+                                typeName = cTypeName,
+                                charge = cCurrent,
+                                itemId = cs.ItemId,
+                                inventoryId = cs.InventoryId,
+                                chargerInv = chargerInv,
+                                used = false,
+                            })
                         end
                     end
                 end
             end
         end
+    end
 
-        if bestChargerItem and bestChargerInv then
+    local swapCount = 0
+
+    -- Sort player batteries lowest charge first (swap worst ones first)
+    table.sort(playerBatteries, function(a, b) return a.chargePercent < b.chargePercent end)
+
+    for _, playerBat in ipairs(playerBatteries) do
+        if playerBat.chargePercent >= 0.99 then goto nextBattery end
+
+        -- Find best unused charger battery (same type, highest charge, better than player's)
+        local bestIdx = nil
+        local bestCharge = playerBat.charge
+
+        for i, cb in ipairs(chargerBatteries) do
+            if not cb.used and cb.typeName == playerBat.typeName and cb.charge > bestCharge then
+                bestCharge = cb.charge
+                bestIdx = i
+            end
+        end
+
+        if bestIdx then
+            local cb = chargerBatteries[bestIdx]
+
             -- Step 1: Move player battery to charger
             local ok1 = pcall(function()
                 playerInv:MoveItemBetweenInventories(
-                    playerBat.itemId, playerBat.inventoryId, bestChargerInv.InventoryId)
+                    playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
             end)
 
             if ok1 then
                 -- Step 2: Move charger battery to player
                 local ok2 = pcall(function()
                     playerInv:MoveItemBetweenInventories(
-                        bestChargerItem.ItemId, bestChargerItem.InventoryId, playerInv.InventoryId)
+                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
                 end)
 
                 if ok2 then
                     swapCount = swapCount + 1
+                    cb.used = true
                 else
-                    -- Rollback: move player battery back
+                    -- Rollback
                     pcall(function()
                         playerInv:MoveItemBetweenInventories(
-                            playerBat.itemId, bestChargerInv.InventoryId, playerBat.inventoryId)
+                            playerBat.itemId, cb.chargerInv.InventoryId, playerBat.inventoryId)
                     end)
                 end
             end
