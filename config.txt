@@ -3,3 +3,17 @@ keybind_open=G
 radius=25
 cooldown=1.0
 notify=true
+
+# Keep tools and equipment from being quick-stacked (true/false)
+keep_tools=true
+keep_equipment=true
+
+# Specific item types to never quick-stack (comma-separated, by FName)
+# Example: keep_types=DA_BasicBattery_ItemType,DA_FilteredWater_ItemType
+keep_types=
+
+# Label prefix for locker matching (blank = all labels matched)
+# If set, only lockers whose label starts with this prefix will be matched
+# Example: label_prefix=%qs
+# Then label "%qs Titanium" would match, but "Titanium" alone would not
+label_prefix=
