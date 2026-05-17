@@ -83,6 +83,9 @@ local function shouldKeepItem(typeName, fullName)
         if string.find(lname, "/deployables/", 1, true) then return true end
     end
 
+    -- Skip batteries/power cells when battery swap is enabled (handled by swap logic)
+    if config.BatterySwap and isBatteryType(typeName) then return true end
+
     for _, keepType in ipairs(config.KeepTypes) do
         if typeName == keepType then return true end
     end
