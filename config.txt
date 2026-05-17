@@ -4,13 +4,17 @@ radius=25
 cooldown=1.0
 notify=true
 
-# Allow tools and equipment to be quick-stacked (true/false)
+# Allow tools, equipment, and consumables to be quick-stacked (true/false)
 stack_tools=false
 stack_equipment=false
+stack_consumables=false
 
 # Specific item types to never quick-stack (comma-separated, by FName)
 # Example: keep_types=DA_BasicBattery_ItemType,DA_FilteredWater_ItemType
 keep_types=
+
+# Route items to lockers based on their label (true/false)
+label_routing=true
 
 # Label prefix for locker matching (blank = all labels matched)
 # If set, only lockers whose label starts with this prefix will be matched
