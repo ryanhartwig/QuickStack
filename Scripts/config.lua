@@ -11,6 +11,7 @@ config.StackEquipment = false
 config.StackConsumables = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
+config.LabelRouting = true
 config.BatterySwap = true
 
 -- Parse a comma-separated string into a table
@@ -63,6 +64,8 @@ local function loadConfig()
                     config.KeepTypes = parseList(value)
                 elseif key == "label_prefix" then
                     config.LabelPrefix = value
+                elseif key == "label_routing" then
+                    config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
                 end

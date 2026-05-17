@@ -510,7 +510,7 @@ local function doQuickStack()
                         local ok, inv = pcall(function() return source.getInv(actor) end)
                         if ok and inv and inv:IsValid() then
                             local label = nil
-                            if source.hasLabel then
+                            if source.hasLabel and config.LabelRouting then
                                 local rawLabel = getLockerLabel(actor)
                                 if rawLabel then
                                     if config.LabelPrefix == "" then
