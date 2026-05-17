@@ -7,7 +7,7 @@ local UEHelpers = require("UEHelpers")
 local config = require("config")
 local utils = require("utils")
 
-local VERSION = "1.2.2"
+local VERSION = "1.2.3"
 -- N: Quick Stack to nearby containers (matching items only)
 -- F: Quick Stack into currently open container (matching items only)
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
@@ -162,40 +162,32 @@ local function doQuickStack()
         return
     end
 
-    local allInvComps = FindAllOf("UWEInventoryComponent")
-    if not allInvComps then
-        utils.Notify("No matching containers nearby", config)
-        return
-    end
+    -- Whitelisted container classes for nearby quick-stack
+    local containerSources = {
+        { class = "SN2Locker",          getInv = function(a) return a.Inventory end },
+        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end },
+    }
 
     local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
-    local playerInvId = playerInv.InventoryId
     local nearbyLockers = {}
-    for _, inv in ipairs(allInvComps) do
-        if inv:IsValid() and inv.InventoryId ~= playerInvId then
-            local ok, outer = pcall(function() return inv:GetOuter() end)
-            if ok and outer and outer:IsValid() then
-                -- Skip player characters (don't stack into other players' inventories)
-                local ok1b, isPlayer = pcall(function()
-                    return outer:IsA(StaticFindObject("/Script/Subnautica2.SN2PlayerCharacter"))
-                end)
-                if ok1b and isPlayer then goto continue end
 
-                local ok2, outerLoc = pcall(function() return outer:K2_GetActorLocation() end)
-                if ok2 then
-                    local dx = outerLoc.X - playerLoc.X
-                    local dy = outerLoc.Y - playerLoc.Y
-                    local dz = outerLoc.Z - playerLoc.Z
-                    local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+    for _, source in ipairs(containerSources) do
+        local actors = FindAllOf(source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor:IsValid() then
+                    local dist = utils.GetDistance(pawn, actor)
                     if dist <= radiusUnits then
-                        table.insert(nearbyLockers, {
-                            inventory = inv,
-                            inventoryId = inv.InventoryId,
-                        })
+                        local ok, inv = pcall(function() return source.getInv(actor) end)
+                        if ok and inv and inv:IsValid() then
+                            table.insert(nearbyLockers, {
+                                inventory = inv,
+                                inventoryId = inv.InventoryId,
+                            })
+                        end
                     end
                 end
-                ::continue::
             end
         end
     end
