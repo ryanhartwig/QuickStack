@@ -6,8 +6,8 @@ config.KeybindOpen = "G"
 config.Radius = 25
 config.Cooldown = 1.0
 config.Notify = true
-config.KeepTools = true
-config.KeepEquipment = true
+config.StackTools = false
+config.StackEquipment = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
 
@@ -51,10 +51,10 @@ local function loadConfig()
                     config.Cooldown = tonumber(value) or 1.0
                 elseif key == "notify" then
                     config.Notify = (value == "true")
-                elseif key == "keep_tools" then
-                    config.KeepTools = (value == "true")
-                elseif key == "keep_equipment" then
-                    config.KeepEquipment = (value == "true")
+                elseif key == "stack_tools" then
+                    config.StackTools = (value == "true")
+                elseif key == "stack_equipment" then
+                    config.StackEquipment = (value == "true")
                 elseif key == "keep_types" then
                     config.KeepTypes = parseList(value)
                 elseif key == "label_prefix" then
@@ -65,9 +65,9 @@ local function loadConfig()
     end
 
     file:close()
-    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, keep_tools=%s, keep_equipment=%s, keep_types=%d items\n",
+    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items\n",
         config.Keybind, config.KeybindOpen, config.Radius, config.Cooldown,
-        tostring(config.Notify), tostring(config.KeepTools), tostring(config.KeepEquipment),
+        tostring(config.Notify), tostring(config.StackTools), tostring(config.StackEquipment),
         #config.KeepTypes))
 end
 

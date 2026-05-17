@@ -5,6 +5,43 @@
 
 local UEHelpers = require("UEHelpers")
 
+-- TEMP: Range probe (press M)
+RegisterKeyBind(Key.M, function()
+    ExecuteInGameThread(function()
+        print("\n[QuickStack] === RANGE PROBE ===\n")
+        local controller = UEHelpers:GetPlayerController()
+        local pawn = controller.Pawn
+        local playerLoc = pawn:K2_GetActorLocation()
+        local lockers = FindAllOf("SN2Locker")
+        if not lockers then print("[QuickStack] No lockers found\n") return end
+        print(string.format("[QuickStack] Total SN2Locker in memory: %d\n", #lockers))
+        local buckets = {25, 50, 100, 150, 200, 300, 500, 1000}
+        local counts = {}
+        for _, b in ipairs(buckets) do counts[b] = 0 end
+        local farthest = 0
+        for _, locker in ipairs(lockers) do
+            if locker:IsValid() then
+                local ok, loc = pcall(function() return locker:K2_GetActorLocation() end)
+                if ok then
+                    local dx = loc.X - playerLoc.X
+                    local dy = loc.Y - playerLoc.Y
+                    local dz = loc.Z - playerLoc.Z
+                    local dist = math.sqrt(dx*dx + dy*dy + dz*dz) / 100
+                    if dist > farthest then farthest = dist end
+                    for _, b in ipairs(buckets) do
+                        if dist <= b then counts[b] = counts[b] + 1 end
+                    end
+                end
+            end
+        end
+        for _, b in ipairs(buckets) do
+            print(string.format("[QuickStack]   <= %dm: %d lockers\n", b, counts[b]))
+        end
+        print(string.format("[QuickStack] Farthest: %.0fm\n", farthest))
+        print("[QuickStack] === END RANGE PROBE ===\n\n")
+    end)
+end)
+
 local config = require("config")
 local utils = require("utils")
 
@@ -39,13 +76,13 @@ local lastActivation = 0
 local function shouldKeepItem(typeName, fullName)
     local lname = string.lower(fullName)
 
-    -- Keep tools (Scanner, Multitool, etc.)
-    if config.KeepTools then
+    -- Skip tools unless stacking is enabled
+    if not config.StackTools then
         if string.find(lname, "/tools/", 1, true) then return true end
     end
 
-    -- Keep equipment (tanks, fins, rebreather, etc.)
-    if config.KeepEquipment then
+    -- Skip equipment unless stacking is enabled
+    if not config.StackEquipment then
         if string.find(lname, "/equipment/", 1, true) then return true end
         if string.find(lname, "/equippable/", 1, true) then return true end
         if string.find(lname, "/deployables/", 1, true) then return true end
@@ -263,24 +300,34 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
 
         if bestIdx then
             local data = nearbyLockers[bestIdx]
-            local ok3 = pcall(function()
+            print(string.format("[QuickStack] XFER: item=%s -> container #%d (invId=%d, label=%s)\n",
+                item.typeName, bestIdx, data.inventoryId, tostring(nearbyLockers[bestIdx].label)))
+
+            local ok3, err3 = pcall(function()
                 playerInv:MoveItemBetweenInventories(item.itemId, item.inventoryId, data.inventoryId)
             end)
+            print(string.format("[QuickStack] XFER: MoveItemBetweenInventories ok=%s err=%s\n",
+                tostring(ok3), tostring(err3)))
 
             if ok3 then
                 containersUsed[bestIdx] = true
                 lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                 lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
             else
-                local ok4 = pcall(function()
+                local ok4, err4 = pcall(function()
                     playerInv:MoveInventoryItem(data.inventory, item.itemId, playerInv)
                 end)
+                print(string.format("[QuickStack] XFER: MoveInventoryItem fallback ok=%s err=%s\n",
+                    tostring(ok4), tostring(err4)))
                 if ok4 then
                     containersUsed[bestIdx] = true
                     lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                     lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
                 end
             end
+        else
+            print(string.format("[QuickStack] XFER: no match for %s (someFull=%s)\n",
+                item.typeName, tostring(someFull)))
         end
     end
 

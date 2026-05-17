@@ -4,9 +4,9 @@ radius=25
 cooldown=1.0
 notify=true
 
-# Keep tools and equipment from being quick-stacked (true/false)
-keep_tools=true
-keep_equipment=true
+# Allow tools and equipment to be quick-stacked (true/false)
+stack_tools=false
+stack_equipment=false
 
 # Specific item types to never quick-stack (comma-separated, by FName)
 # Example: keep_types=DA_BasicBattery_ItemType,DA_FilteredWater_ItemType
