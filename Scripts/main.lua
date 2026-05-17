@@ -83,6 +83,23 @@ local function shouldKeepItem(typeName, fullName)
         if string.find(lname, "/deployables/", 1, true) then return true end
     end
 
+    -- Skip consumables (food, water, medical)
+    if not config.StackConsumables then
+        local ltname = string.lower(typeName)
+        local consumablePatterns = {
+            -- Water/drinks
+            "water", "isotonic", "drink",
+            -- Food
+            "nutrient", "block", "pavlova", "souvlaki", "temaki", "chutney",
+            "jerky", "salad", "saturn", "mash", "clump", "shavings", "cookie",
+            -- Medical
+            "firstaid", "first_aid", "medkit", "med_kit",
+        }
+        for _, pattern in ipairs(consumablePatterns) do
+            if string.find(ltname, pattern, 1, true) then return true end
+        end
+    end
+
     -- Skip batteries/power cells when battery swap is enabled (handled by swap logic)
     if config.BatterySwap and isBatteryType(typeName) then return true end
 

@@ -8,6 +8,7 @@ config.Cooldown = 1.0
 config.Notify = true
 config.StackTools = false
 config.StackEquipment = false
+config.StackConsumables = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
 config.BatterySwap = true
@@ -56,6 +57,8 @@ local function loadConfig()
                     config.StackTools = (value == "true")
                 elseif key == "stack_equipment" then
                     config.StackEquipment = (value == "true")
+                elseif key == "stack_consumables" then
+                    config.StackConsumables = (value == "true")
                 elseif key == "keep_types" then
                     config.KeepTypes = parseList(value)
                 elseif key == "label_prefix" then
