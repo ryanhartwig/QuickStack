@@ -204,16 +204,23 @@ end
 --- Transfer matching items from player inventory to nearby containers
 --- Supports label-based routing and content-based matching
 local function transferToLockers(playerInv, transferableItems, totalItemsBefore, nearbyLockers)
-    -- Build locker data: contents + labels
+    -- Build locker data: contents, labels, capacity tracking
     local lockerTypeData = {}
     local lockerLabels = {}
+    local lockerItemCount = {}
+    local lockerMaxItems = {}
 
     for i, data in ipairs(nearbyLockers) do
         lockerTypeData[i] = {}
         lockerLabels[i] = data.label  -- may be nil
+        lockerItemCount[i] = 0
+
+        local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
+        lockerMaxItems[i] = (ok0 and maxItems) or 30
 
         local ok, lockerItems = pcall(function() return data.inventory:GetItems() end)
         if ok and lockerItems then
+            lockerItemCount[i] = #lockerItems
             for _, item in ipairs(lockerItems) do
                 local s = item:get()
                 if s.ItemType then
@@ -235,10 +242,10 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
         local bestIsLabel = false
 
         for i, data in ipairs(nearbyLockers) do
-            local ok2, full = pcall(function() return data.inventory:IsFull() end)
-            if ok2 and full then
+            -- Use our tracked count instead of IsFull() to avoid stale data
+            if lockerItemCount[i] >= lockerMaxItems[i] then
                 someFull = true
-            elseif ok2 and not full then
+            else
                 -- Priority 1: labeled locker that matches this item
                 if lockerLabels[i] and labelMatchesItem(lockerLabels[i], item.typeName) then
                     if not bestIsLabel then
@@ -266,6 +273,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
             if ok3 then
                 containersUsed[bestIdx] = true
                 lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
+                lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
             else
                 local ok4 = pcall(function()
                     playerInv:MoveInventoryItem(data.inventory, item.itemId, playerInv)
@@ -273,6 +281,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
                 if ok4 then
                     containersUsed[bestIdx] = true
                     lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
+                    lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
                 end
             end
         end
