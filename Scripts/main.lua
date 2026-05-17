@@ -111,10 +111,7 @@ local function getLockerLabel(actor)
                 end
             end
         end)
-        if str then
-            print(string.format("[QuickStack] DEBUG: Locker label found: '%s'\n", str))
-            return str
-        end
+        if str then return str end
     end
 
     return nil
@@ -369,8 +366,7 @@ local function doQuickStack()
     for _, source in ipairs(containerSources) do
         local actors = FindAllOf(source.class)
         if actors then
-            print(string.format("[QuickStack] DEBUG: Scanning %d %s actors\n", #actors, source.class))
-            for j, actor in ipairs(actors) do
+            for _, actor in ipairs(actors) do
                 if actor:IsValid() then
                     local dist = utils.GetDistance(pawn, actor)
                     if dist <= radiusUnits then
@@ -399,8 +395,6 @@ local function doQuickStack()
                                 inventoryId = inv.InventoryId,
                                 label = label,
                             })
-                            print(string.format("[QuickStack] DEBUG: Added container #%d (label=%s)\n",
-                                #nearbyLockers, tostring(label)))
                         end
                     end
                 end
