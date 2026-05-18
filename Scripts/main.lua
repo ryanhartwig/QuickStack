@@ -251,6 +251,20 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
 
     local containersUsed = {}
     local someFull = false
+    local transferDetails = {}  -- keyed by typeName: { itemType, count, containers }
+
+    local function recordTransfer(item, lockerIdx)
+        local label = lockerLabels[lockerIdx] or "Unlabeled"
+        if not transferDetails[item.typeName] then
+            transferDetails[item.typeName] = {
+                itemType = item.itemType,
+                count = 0,
+                containers = {},
+            }
+        end
+        transferDetails[item.typeName].count = transferDetails[item.typeName].count + 1
+        transferDetails[item.typeName].containers[label] = true
+    end
 
     for _, item in ipairs(transferableItems) do
         local bestIdx = nil
@@ -286,6 +300,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
                 containersUsed[bestIdx] = true
                 lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                 lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
+                recordTransfer(item, bestIdx)
             else
                 local ok4 = pcall(function()
                     playerInv:MoveInventoryItem(data.inventory, item.itemId, playerInv)
@@ -294,6 +309,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
                     containersUsed[bestIdx] = true
                     lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                     lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
+                    recordTransfer(item, bestIdx)
                 end
             end
         end
@@ -303,7 +319,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
     local actualTransferred = totalItemsBefore - #afterItems
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
-    return actualTransferred, numContainers, someFull
+    return actualTransferred, numContainers, someFull, transferDetails
 end
 
 --- Battery swap: for each battery/power cell in player inventory,
@@ -440,6 +456,154 @@ local function doBatterySwap(pawn, playerInv)
     return swapCount
 end
 
+--- Transfer Summary UI panel
+local activeSummaryPanel = nil  -- track current panel for replacement
+
+local function showTransferSummary(transferDetails)
+    -- Skip if nothing transferred
+    local count = 0
+    for _ in pairs(transferDetails) do count = count + 1 end
+    if count == 0 then return end
+
+    -- Remove previous panel if still visible
+    if activeSummaryPanel then
+        pcall(function() activeSummaryPanel:RemoveFromViewport() end)
+        activeSummaryPanel = nil
+    end
+
+    local pc = UEHelpers:GetPlayerController()
+    local wbLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    local uwClass = StaticFindObject("/Script/UMG.UserWidget")
+    if not pc or not wbLib or not uwClass then return end
+
+    -- Create root UUserWidget
+    local root = nil
+    pcall(function() root = wbLib:Create(pc, uwClass, pc) end)
+    if not root then return end
+
+    -- Class references for primitives
+    local canvasCls = StaticFindObject("/Script/UMG.CanvasPanel")
+    local vboxCls = StaticFindObject("/Script/UMG.VerticalBox")
+    local hboxCls = StaticFindObject("/Script/UMG.HorizontalBox")
+    local textCls = StaticFindObject("/Script/UMG.TextBlock")
+    local imgCls = StaticFindObject("/Script/UMG.Image")
+
+    if not canvasCls or not vboxCls or not textCls then return end
+
+    local widgetNum = 0
+    local function make(cls, name)
+        if not cls then return nil end
+        widgetNum = widgetNum + 1
+        local w = nil
+        pcall(function() w = StaticConstructObject(cls, root, FName("QS_" .. name .. widgetNum)) end)
+        return w
+    end
+
+    -- Build widget tree: root > canvas > vbox > rows
+    local canvas = make(canvasCls, "Canvas")
+    if not canvas then return end
+    pcall(function() root.WidgetTree.RootWidget = canvas end)
+
+    local vbox = make(vboxCls, "VBox")
+    if not vbox then return end
+
+    pcall(function()
+        local slot = canvas:AddChildToCanvas(vbox)
+        if slot then
+            slot:SetAnchors({ Minimum = { X = 1.0, Y = 0.3 }, Maximum = { X = 1.0, Y = 0.3 } })
+            slot:SetAlignment({ X = 1.0, Y = 0.0 })  -- Anchor right edge of content to anchor point
+            slot:SetPosition({ X = -20, Y = 0 })      -- 20px padding from right screen edge
+            slot:SetAutoSize(true)
+        end
+    end)
+
+    -- Build rows from transferDetails, max 8
+    local rowCount = 0
+    local overflow = 0
+
+    -- Sort by count descending for consistent display
+    local sorted = {}
+    for typeName, detail in pairs(transferDetails) do
+        table.insert(sorted, { typeName = typeName, detail = detail })
+    end
+    table.sort(sorted, function(a, b) return a.detail.count > b.detail.count end)
+
+    for _, entry in ipairs(sorted) do
+        if rowCount >= 8 then
+            overflow = overflow + 1
+        else
+            rowCount = rowCount + 1
+            local detail = entry.detail
+            local hbox = make(hboxCls, "HBox")
+            if not hbox then break end
+
+            -- Item icon (constrained to 32x32)
+            if imgCls and detail.itemType then
+                local img = make(imgCls, "Img")
+                if img then
+                    pcall(function() img:SetBrushFromSoftTexture(detail.itemType.Thumbnail, false) end)
+                    pcall(function() img:SetDesiredSizeOverride({ X = 32, Y = 32 }) end)
+                    pcall(function()
+                        local imgSlot = hbox:AddChildToHorizontalBox(img)
+                        if imgSlot then
+                            imgSlot:SetPadding({ Left = 4, Top = 2, Right = 8, Bottom = 2 })
+                            imgSlot:SetSize({ Value = 0, SizeRule = 0 })  -- Auto size (don't stretch)
+                        end
+                    end)
+                end
+            end
+
+            -- Item name + count (e.g. "Titanium x3")
+            local cleanName = entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
+            local text1 = make(textCls, "Name")
+            if text1 then
+                pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
+                pcall(function() hbox:AddChildToHorizontalBox(text1) end)
+            end
+
+            -- Container label (e.g. " -> Materials")
+            local labels = {}
+            for label, _ in pairs(detail.containers) do
+                table.insert(labels, label)
+            end
+            if #labels > 0 then
+                local text2 = make(textCls, "Dest")
+                if text2 then
+                    local destStr = " -> " .. table.concat(labels, ", ")
+                    pcall(function() text2:SetText(FText(destStr)) end)
+                    pcall(function() hbox:AddChildToHorizontalBox(text2) end)
+                end
+            end
+
+            pcall(function() vbox:AddChildToVerticalBox(hbox) end)
+        end
+    end
+
+    -- Overflow indicator
+    if overflow > 0 then
+        local overflowText = make(textCls, "More")
+        if overflowText then
+            pcall(function() overflowText:SetText(FText("+" .. overflow .. " more...")) end)
+            pcall(function() vbox:AddChildToVerticalBox(overflowText) end)
+        end
+    end
+
+    -- Display
+    pcall(function() root:AddToViewport(150) end)
+    activeSummaryPanel = root
+
+    -- Auto-dismiss
+    local duration = (config.SummaryDuration or 6) * 1000
+    ExecuteWithDelay(duration, function()
+        ExecuteInGameThread(function()
+            if activeSummaryPanel == root then
+                pcall(function() root:RemoveFromViewport() end)
+                activeSummaryPanel = nil
+            end
+        end)
+    end)
+end
+
 --- Show the appropriate notification for a quick-stack result
 local function showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
     local function buildMessage(transferred, containers, full, swaps)
@@ -554,9 +718,9 @@ local function doQuickStack()
     local swapCount = doBatterySwap(pawn, playerInv)
 
     -- Do item stacking
-    local actualTransferred, numContainers, someFull = 0, 0, false
+    local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
     if #transferableItems > 0 and #nearbyLockers > 0 then
-        actualTransferred, numContainers, someFull = transferToLockers(
+        actualTransferred, numContainers, someFull, transferDetails = transferToLockers(
             playerInv, transferableItems, totalItemsBefore, nearbyLockers)
     end
 
@@ -567,6 +731,7 @@ local function doQuickStack()
         utils.Notify("No matching containers nearby", config)
     else
         showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
+        showTransferSummary(transferDetails)
     end
 end
 

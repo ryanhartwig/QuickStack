@@ -14,6 +14,7 @@ config.LabelPrefix = ""
 config.ExcludePrefix = "%x"
 config.LabelRouting = true
 config.BatterySwap = true
+config.SummaryDuration = 6
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -71,16 +72,18 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
+                elseif key == "summary_duration" then
+                    config.SummaryDuration = tonumber(value) or 6
                 end
             end
         end
     end
 
     file:close()
-    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items, battery_swap=%s\n",
+    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items, battery_swap=%s, summary_duration=%ds\n",
         config.Keybind, config.KeybindOpen, config.Radius, config.Cooldown,
         tostring(config.Notify), tostring(config.StackTools), tostring(config.StackEquipment),
-        #config.KeepTypes, tostring(config.BatterySwap)))
+        #config.KeepTypes, tostring(config.BatterySwap), config.SummaryDuration))
 end
 
 loadConfig()
