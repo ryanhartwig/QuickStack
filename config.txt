@@ -14,6 +14,7 @@ stack_consumables=false
 keep_types=
 
 # Route items to lockers based on their label (true/false)
+# Setting this to false will not affect the 'exclude_prefix' behaviour.
 label_routing=true
 
 # Exclusion prefix — lockers labeled with this prefix are completely skipped
