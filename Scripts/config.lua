@@ -14,6 +14,8 @@ config.LabelPrefix = ""
 config.ExcludePrefix = "%x"
 config.LabelRouting = true
 config.BatterySwap = true
+config.SummaryPanel = true
+config.SummaryShowDestination = true
 config.SummaryDuration = 6
 
 -- Parse a comma-separated string into a table
@@ -72,6 +74,10 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
+                elseif key == "summary_panel" then
+                    config.SummaryPanel = (value == "true")
+                elseif key == "summary_show_destination" then
+                    config.SummaryShowDestination = (value == "true")
                 elseif key == "summary_duration" then
                     config.SummaryDuration = tonumber(value) or 6
                 end

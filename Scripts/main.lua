@@ -460,7 +460,8 @@ end
 local activeSummaryPanel = nil  -- track current panel for replacement
 
 local function showTransferSummary(transferDetails)
-    -- Skip if nothing transferred
+    -- Skip if disabled or nothing transferred
+    if not config.SummaryPanel then return end
     local count = 0
     for _ in pairs(transferDetails) do count = count + 1 end
     if count == 0 then return end
@@ -517,11 +518,7 @@ local function showTransferSummary(transferDetails)
         end
     end)
 
-    -- Build rows from transferDetails, max 8
-    local rowCount = 0
-    local overflow = 0
-
-    -- Sort by count descending for consistent display
+    -- Build rows from transferDetails, sorted by count descending
     local sorted = {}
     for typeName, detail in pairs(transferDetails) do
         table.insert(sorted, { typeName = typeName, detail = detail })
@@ -529,39 +526,36 @@ local function showTransferSummary(transferDetails)
     table.sort(sorted, function(a, b) return a.detail.count > b.detail.count end)
 
     for _, entry in ipairs(sorted) do
-        if rowCount >= 8 then
-            overflow = overflow + 1
-        else
-            rowCount = rowCount + 1
-            local detail = entry.detail
-            local hbox = make(hboxCls, "HBox")
-            if not hbox then break end
+        local detail = entry.detail
+        local hbox = make(hboxCls, "HBox")
+        if not hbox then break end
 
-            -- Item icon (constrained to 32x32)
-            if imgCls and detail.itemType then
-                local img = make(imgCls, "Img")
-                if img then
-                    pcall(function() img:SetBrushFromSoftTexture(detail.itemType.Thumbnail, false) end)
-                    pcall(function() img:SetDesiredSizeOverride({ X = 32, Y = 32 }) end)
-                    pcall(function()
-                        local imgSlot = hbox:AddChildToHorizontalBox(img)
-                        if imgSlot then
-                            imgSlot:SetPadding({ Left = 4, Top = 2, Right = 8, Bottom = 2 })
-                            imgSlot:SetSize({ Value = 0, SizeRule = 0 })  -- Auto size (don't stretch)
-                        end
-                    end)
-                end
+        -- Item icon (constrained to 32x32)
+        if imgCls and detail.itemType then
+            local img = make(imgCls, "Img")
+            if img then
+                pcall(function() img:SetBrushFromSoftTexture(detail.itemType.Thumbnail, false) end)
+                pcall(function() img:SetDesiredSizeOverride({ X = 32, Y = 32 }) end)
+                pcall(function()
+                    local imgSlot = hbox:AddChildToHorizontalBox(img)
+                    if imgSlot then
+                        imgSlot:SetPadding({ Left = 4, Top = 2, Right = 8, Bottom = 2 })
+                        imgSlot:SetSize({ Value = 0, SizeRule = 0 })  -- Auto size (don't stretch)
+                    end
+                end)
             end
+        end
 
-            -- Item name + count (e.g. "Titanium x3")
-            local cleanName = entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
-            local text1 = make(textCls, "Name")
-            if text1 then
-                pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
-                pcall(function() hbox:AddChildToHorizontalBox(text1) end)
-            end
+        -- Item name + count (e.g. "Titanium x3")
+        local cleanName = entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
+        local text1 = make(textCls, "Name")
+        if text1 then
+            pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
+            pcall(function() hbox:AddChildToHorizontalBox(text1) end)
+        end
 
-            -- Container label (e.g. " -> Materials")
+        -- Container label (e.g. " -> Materials")
+        if config.SummaryShowDestination then
             local labels = {}
             for label, _ in pairs(detail.containers) do
                 table.insert(labels, label)
@@ -574,26 +568,50 @@ local function showTransferSummary(transferDetails)
                     pcall(function() hbox:AddChildToHorizontalBox(text2) end)
                 end
             end
-
-            pcall(function() vbox:AddChildToVerticalBox(hbox) end)
         end
+
+        pcall(function() vbox:AddChildToVerticalBox(hbox) end)
     end
 
-    -- Overflow indicator
-    if overflow > 0 then
-        local overflowText = make(textCls, "More")
-        if overflowText then
-            pcall(function() overflowText:SetText(FText("+" .. overflow .. " more...")) end)
-            pcall(function() vbox:AddChildToVerticalBox(overflowText) end)
-        end
-    end
-
-    -- Display
+    -- Display with slide-in + fade-in animation
+    pcall(function() vbox:SetRenderOpacity(0) end)
+    pcall(function() vbox:SetRenderTranslation({ X = 150, Y = 0 }) end)
     pcall(function() root:AddToViewport(150) end)
     activeSummaryPanel = root
 
-    -- Auto-dismiss
+    -- Animate in: 12 steps over ~400ms, more pronounced slide
+    local animSteps = 12
+    local animInterval = 33  -- ms per step
+    for step = 1, animSteps do
+        ExecuteWithDelay(step * animInterval, function()
+            ExecuteInGameThread(function()
+                if activeSummaryPanel ~= root then return end
+                local t = step / animSteps
+                -- Cubic ease-out: more dramatic deceleration
+                local eased = 1 - (1 - t) * (1 - t) * (1 - t)
+                pcall(function() vbox:SetRenderOpacity(eased) end)
+                pcall(function() vbox:SetRenderTranslation({ X = 250 * (1 - eased), Y = 0 }) end)
+            end)
+        end)
+    end
+
+    -- Auto-dismiss with slow fade-out over last 40% of duration
     local duration = (config.SummaryDuration or 6) * 1000
+    local fadeDuration = math.floor(duration * 0.4)  -- 40% of total
+    local fadeSteps = 12
+    local fadeInterval = math.floor(fadeDuration / fadeSteps)
+    local fadeStart = duration - fadeDuration
+
+    for step = 1, fadeSteps do
+        ExecuteWithDelay(fadeStart + step * fadeInterval, function()
+            ExecuteInGameThread(function()
+                if activeSummaryPanel ~= root then return end
+                local t = step / fadeSteps
+                pcall(function() vbox:SetRenderOpacity(1 - t) end)
+            end)
+        end)
+    end
+
     ExecuteWithDelay(duration, function()
         ExecuteInGameThread(function()
             if activeSummaryPanel == root then
