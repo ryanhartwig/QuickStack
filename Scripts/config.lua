@@ -11,6 +11,7 @@ config.StackEquipment = false
 config.StackConsumables = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
+config.ExcludePrefix = "%x"
 config.LabelRouting = true
 config.BatterySwap = true
 
@@ -64,6 +65,8 @@ local function loadConfig()
                     config.KeepTypes = parseList(value)
                 elseif key == "label_prefix" then
                     config.LabelPrefix = value
+                elseif key == "exclude_prefix" then
+                    config.ExcludePrefix = value
                 elseif key == "label_routing" then
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then

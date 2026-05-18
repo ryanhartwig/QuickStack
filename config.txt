@@ -16,6 +16,10 @@ keep_types=
 # Route items to lockers based on their label (true/false)
 label_routing=true
 
+# Exclusion prefix — lockers labeled with this prefix are completely skipped
+# Example: label a locker "%x" or "%x Food" and it won't be touched by quick-stack
+exclude_prefix=%x
+
 # Label prefix for locker matching (blank = all labels matched)
 # If set, only lockers whose label starts with this prefix will be matched
 # Example: label_prefix=%qs

@@ -509,9 +509,22 @@ local function doQuickStack()
                     if dist <= radiusUnits then
                         local ok, inv = pcall(function() return source.getInv(actor) end)
                         if ok and inv and inv:IsValid() then
+                            -- Read label if this container type supports it
+                            local rawLabel = nil
+                            if source.hasLabel then
+                                local ok2, lbl = pcall(function() return getLockerLabel(actor) end)
+                                if ok2 then rawLabel = lbl end
+                            end
+
+                            -- Check exclusion prefix — skip this container entirely
+                            if rawLabel and config.ExcludePrefix ~= "" then
+                                if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
+                                    goto nextActor
+                                end
+                            end
+
                             local label = nil
-                            if source.hasLabel and config.LabelRouting then
-                                local rawLabel = getLockerLabel(actor)
+                            if rawLabel and config.LabelRouting then
                                 if rawLabel then
                                     if config.LabelPrefix == "" then
                                         label = rawLabel
@@ -531,6 +544,7 @@ local function doQuickStack()
                             })
                         end
                     end
+                    ::nextActor::
                 end
             end
         end
