@@ -749,7 +749,16 @@ local function doQuickStack()
         utils.Notify("No matching containers nearby", config)
     else
         showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
-        showTransferSummary(transferDetails)
+        -- Delay summary panel to match toast on non-host clients (stale inventory data)
+        if actualTransferred <= 0 and numContainers > 0 then
+            ExecuteWithDelay(500, function()
+                ExecuteInGameThread(function()
+                    showTransferSummary(transferDetails)
+                end)
+            end)
+        else
+            showTransferSummary(transferDetails)
+        end
     end
 end
 
