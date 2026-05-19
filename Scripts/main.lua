@@ -992,6 +992,9 @@ local function doSortOverflow()
     local pawn = utils.GetPlayerPawn()
     if not pawn then return end
 
+    local playerInv = pawn.InventoryComponent
+    if not playerInv or not playerInv:IsValid() then return end
+
     -- Whitelisted container classes
     local containerSources = {
         { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
@@ -1155,7 +1158,7 @@ local function doSortOverflow()
             if bestIdx then
                 local targetData = targetLockers[bestIdx]
                 local ok3 = pcall(function()
-                    overflowData.inventory:MoveItemBetweenInventories(
+                    playerInv:MoveItemBetweenInventories(
                         s.ItemId, s.InventoryId, targetData.inventoryId)
                 end)
                 if ok3 then
