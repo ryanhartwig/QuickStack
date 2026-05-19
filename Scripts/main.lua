@@ -153,21 +153,58 @@ local function getLockerLabel(actor)
     return nil
 end
 
---- Check if a locker label matches an item type name (fuzzy)
-local function labelMatchesItem(label, typeName)
-    local function normalize(s)
-        return string.lower(s):gsub("[%s_]", "")
+--- Score how well a locker label matches an item's display name
+--- Returns 0 (no match) or positive score (higher = better match)
+--- Label is comma-separated groups (OR), each group is space-separated tokens (AND)
+--- Each token must be a case-insensitive prefix of a distinct word in the display name
+--- Score = word coverage + character coverage tiebreaker
+--- The tiebreaker ensures "铜线" beats "铜" for item "铜线" (CJK has no word spaces)
+local function scoreLockerMatch(label, displayName)
+    local nameWords = {}
+    local totalNameChars = 0
+    for word in displayName:lower():gmatch("%S+") do
+        table.insert(nameWords, word)
+        totalNameChars = totalNameChars + #word
     end
-    local cleanType = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
-    local normType = normalize(cleanType)
+    if #nameWords == 0 then return 0 end
+
+    local bestScore = 0
+
     for part in label:gmatch("[^,]+") do
-        local normPart = normalize(part)
-        if normPart ~= "" then
-            if string.find(normPart, normType, 1, true) then return true end
-            if string.find(normType, normPart, 1, true) then return true end
+        local tokens = {}
+        for token in part:lower():gmatch("%S+") do
+            table.insert(tokens, token)
         end
+        if #tokens == 0 then goto nextPart end
+
+        -- Each token must prefix-match a distinct word
+        local usedWords = {}
+        local matched = 0
+        local matchedTokenChars = 0
+        for _, token in ipairs(tokens) do
+            for j, word in ipairs(nameWords) do
+                if not usedWords[j] and word:sub(1, #token) == token then
+                    usedWords[j] = true
+                    matched = matched + 1
+                    matchedTokenChars = matchedTokenChars + #token
+                    break
+                end
+            end
+        end
+
+        -- All tokens must match for this group to count
+        if matched == #tokens then
+            -- Word coverage is the primary score (0 to 1.0)
+            -- Character coverage is a tiebreaker (adds 0 to 0.01)
+            local score = (matched / #nameWords)
+                + (matchedTokenChars / totalNameChars) * 0.01
+            if score > bestScore then bestScore = score end
+        end
+
+        ::nextPart::
     end
-    return false
+
+    return bestScore
 end
 
 --- Get the inventory component of the currently open container
@@ -206,8 +243,15 @@ local function getTransferableItems(playerInv)
                 local ok2, fullName = pcall(function() return s.ItemType:GetFullName() end)
                 local fName = ok2 and fullName or ""
                 if not shouldKeepItem(typeName, fName) then
+                    -- Resolve localized display name via FText:ToString()
+                    local displayName = nil
+                    pcall(function() displayName = s.ItemType.Name:ToString() end)
+                    if not displayName or displayName == "" then
+                        displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+                    end
                     table.insert(transferable, {
                         typeName = typeName,
+                        displayName = displayName,
                         fullName = fName,
                         itemId = s.ItemId,
                         inventoryId = s.InventoryId,
@@ -258,6 +302,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
         if not transferDetails[item.typeName] then
             transferDetails[item.typeName] = {
                 itemType = item.itemType,
+                displayName = item.displayName,
                 count = 0,
                 containers = {},
             }
@@ -267,29 +312,32 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
     end
 
     for _, item in ipairs(transferableItems) do
-        local bestIdx = nil
-        local bestCount = 0
-        local bestIsLabel = false
+        local bestLabelScore = 0
+        local bestLabelIdx = nil
+        local bestUnlabeledIdx = nil
+        local bestUnlabeledCount = 0
 
         for i, data in ipairs(nearbyLockers) do
             if lockerItemCount[i] >= lockerMaxItems[i] then
                 someFull = true
             else
-                if lockerLabels[i] and labelMatchesItem(lockerLabels[i], item.typeName) then
-                    if not bestIsLabel then
-                        bestIdx = i
-                        bestCount = 999999
-                        bestIsLabel = true
+                if lockerLabels[i] then
+                    local score = scoreLockerMatch(lockerLabels[i], item.displayName)
+                    if score > bestLabelScore then
+                        bestLabelScore = score
+                        bestLabelIdx = i
                     end
-                elseif not bestIsLabel then
-                    local typeCount = lockerTypeData[i][item.typeName]
-                    if typeCount and typeCount > 0 and typeCount > bestCount then
-                        bestCount = typeCount
-                        bestIdx = i
+                else
+                    local typeCount = lockerTypeData[i][item.typeName] or 0
+                    if typeCount > 0 and typeCount > bestUnlabeledCount then
+                        bestUnlabeledCount = typeCount
+                        bestUnlabeledIdx = i
                     end
                 end
             end
         end
+
+        local bestIdx = bestLabelIdx or bestUnlabeledIdx
 
         if bestIdx then
             local data = nearbyLockers[bestIdx]
@@ -547,7 +595,7 @@ local function showTransferSummary(transferDetails)
         end
 
         -- Item name + count (e.g. "Titanium x3")
-        local cleanName = entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
+        local cleanName = entry.detail.displayName or entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
         local text1 = make(textCls, "Name")
         if text1 then
             pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
