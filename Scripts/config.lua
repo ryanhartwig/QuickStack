@@ -12,7 +12,9 @@ config.StackConsumables = false
 config.KeepTypes = {}
 config.LabelPrefix = ""
 config.ExcludePrefix = "%x"
+config.OverflowPrefix = "%o"
 config.LabelRouting = true
+config.KeybindOverflow = "H"
 config.BatterySwap = true
 config.LabelMaxChars = 50
 config.SummaryPanel = true
@@ -71,6 +73,10 @@ local function loadConfig()
                     config.LabelPrefix = value
                 elseif key == "exclude_prefix" then
                     config.ExcludePrefix = value
+                elseif key == "overflow_prefix" then
+                    config.OverflowPrefix = value
+                elseif key == "keybind_overflow" then
+                    config.KeybindOverflow = value:upper()
                 elseif key == "label_routing" then
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then

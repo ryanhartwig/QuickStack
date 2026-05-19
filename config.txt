@@ -1,6 +1,7 @@
 # ── Controls ──
 keybind=N
 keybind_open=G
+keybind_overflow=H
 cooldown=1.0
 radius=25
 
@@ -28,6 +29,10 @@ exclude_prefix=%x
 # If set, only lockers whose label starts with this prefix will be matched
 # Example: label_prefix=%qs  →  "%qs Titanium" matches, "Titanium" alone does not
 label_prefix=
+
+# Overflow prefix — lockers with this prefix receive items that didn't match elsewhere
+# Press H to sort overflow locker contents back into nearby matching lockers
+overflow_prefix=%o
 
 # Max characters allowed in locker label input (game default is 15)
 # Increase to allow longer comma-separated labels

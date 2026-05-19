@@ -1,7 +1,8 @@
 -- QuickStack Mod for Subnautica 2
--- N: Quick Stack to nearby containers + battery swap
+-- N: Quick Stack to nearby containers + battery swap + overflow dump
 -- G: Quick Stack into currently open container
--- Supports locker labels, item protection, battery/power cell swapping
+-- H: Sort overflow locker contents into nearby matching lockers
+-- Supports locker labels, item protection, battery/power cell swapping, overflow lockers
 
 local UEHelpers = require("UEHelpers")
 local config = require("config")
@@ -509,6 +510,26 @@ local function doBatterySwap(pawn, playerInv)
     return swapCount
 end
 
+--- Wait for server replication before reading inventory
+--- Polls every 100ms until item count changes or timeout reached
+--- Host: 0ms (instant). Non-host: ~100-200ms typical, 1500ms max.
+local function waitForReplication(inventory, countBefore, callback, maxWaitMs)
+    maxWaitMs = maxWaitMs or 1500
+    local elapsed = 0
+    local function check()
+        local current = #inventory:GetItems()
+        if current < countBefore or elapsed >= maxWaitMs then
+            callback(countBefore - current)
+        else
+            elapsed = elapsed + 100
+            ExecuteWithDelay(100, function()
+                ExecuteInGameThread(check)
+            end)
+        end
+    end
+    check()
+end
+
 --- Transfer Summary UI panel
 local activeSummaryPanel = nil  -- track current panel for replacement
 
@@ -702,12 +723,8 @@ local function showResultNotification(actualTransferred, numContainers, someFull
     end
 
     if actualTransferred <= 0 and numContainers > 0 then
-        ExecuteWithDelay(500, function()
-            ExecuteInGameThread(function()
-                local delayedItems = playerInv:GetItems()
-                local delayedCount = totalItemsBefore - #delayedItems
-                utils.Notify(buildMessage(delayedCount, numContainers, someFull, swapCount), config)
-            end)
+        waitForReplication(playerInv, totalItemsBefore, function(confirmedCount)
+            utils.Notify(buildMessage(confirmedCount, numContainers, someFull, swapCount), config)
         end)
     else
         utils.Notify(buildMessage(actualTransferred, numContainers, someFull, swapCount), config)
@@ -736,6 +753,7 @@ local function doQuickStack()
     local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
     local nearbyLockers = {}
+    local overflowLockers = {}
 
     for _, source in ipairs(containerSources) do
         local actors = FindAllOf(source.class)
@@ -756,6 +774,18 @@ local function doQuickStack()
                             -- Check exclusion prefix — skip this container entirely
                             if rawLabel and config.ExcludePrefix ~= "" then
                                 if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
+                                    goto nextActor
+                                end
+                            end
+
+                            -- Check overflow prefix — collect separately
+                            if rawLabel and config.OverflowPrefix ~= "" then
+                                if rawLabel:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
+                                    table.insert(overflowLockers, {
+                                        inventory = inv,
+                                        inventoryId = inv.InventoryId,
+                                        label = rawLabel,
+                                    })
                                     goto nextActor
                                 end
                             end
@@ -797,23 +827,111 @@ local function doQuickStack()
             playerInv, transferableItems, totalItemsBefore, nearbyLockers)
     end
 
-    -- Show combined result
-    if #transferableItems == 0 and swapCount == 0 then
-        utils.Notify("Nothing to stack", config)
-    elseif actualTransferred == 0 and swapCount == 0 and #nearbyLockers == 0 then
-        utils.Notify("No matching containers nearby", config)
-    else
-        showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
-        -- Delay summary panel to match toast on non-host clients (stale inventory data)
-        if actualTransferred <= 0 and numContainers > 0 then
-            ExecuteWithDelay(500, function()
-                ExecuteInGameThread(function()
-                    showTransferSummary(transferDetails)
-                end)
-            end)
+    -- Function to show results (called after all passes complete)
+    local function showResults(totalTransferred, totalContainers)
+        if totalTransferred == 0 and swapCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
+            utils.Notify("No matching containers nearby", config)
+        elseif totalTransferred == 0 and swapCount == 0 then
+            utils.Notify("Nothing to stack", config)
         else
+            local itm = totalTransferred == 1 and "item" or "items"
+            local ctr = totalContainers == 1 and "container" or "containers"
+            local parts = {}
+            if totalTransferred > 0 then
+                if someFull then
+                    table.insert(parts, string.format("Quick Stacked %d %s to %d %s (some full)", totalTransferred, itm, totalContainers, ctr))
+                else
+                    table.insert(parts, string.format("Quick Stacked %d %s to %d %s", totalTransferred, itm, totalContainers, ctr))
+                end
+            end
+            if swapCount > 0 then
+                local bat = swapCount == 1 and "battery" or "batteries"
+                table.insert(parts, string.format("Swapped %d %s", swapCount, bat))
+            end
+            if #parts > 0 then
+                utils.Notify(table.concat(parts, " | "), config)
+            end
             showTransferSummary(transferDetails)
         end
+    end
+
+    -- Nothing to do?
+    if #transferableItems == 0 and swapCount == 0 then
+        utils.Notify("Nothing to stack", config)
+        return
+    end
+
+    -- Pass 2: Overflow dump (only if overflow lockers exist and items remain)
+    local function doOverflowPass(pass1Transferred, pass1Containers)
+        if #overflowLockers == 0 then
+            showResults(pass1Transferred, pass1Containers)
+            return
+        end
+
+        -- Re-read player inventory after pass 1
+        local remainingItems, remainingCount = getTransferableItems(playerInv)
+        if #remainingItems == 0 then
+            showResults(pass1Transferred, pass1Containers)
+            return
+        end
+
+        -- Dump remaining items into overflow lockers
+        local overflowItemCount = {}
+        local overflowMaxItems = {}
+        for i, data in ipairs(overflowLockers) do
+            overflowItemCount[i] = 0
+            local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
+            overflowMaxItems[i] = (ok0 and maxItems) or 30
+            local ok, items = pcall(function() return data.inventory:GetItems() end)
+            if ok and items then
+                overflowItemCount[i] = #items
+            end
+        end
+
+        local overflowContainersUsed = {}
+        for _, item in ipairs(remainingItems) do
+            for i, data in ipairs(overflowLockers) do
+                if overflowItemCount[i] < overflowMaxItems[i] then
+                    local ok = pcall(function()
+                        playerInv:MoveItemBetweenInventories(item.itemId, item.inventoryId, data.inventoryId)
+                    end)
+                    if ok then
+                        overflowContainersUsed[i] = true
+                        overflowItemCount[i] = overflowItemCount[i] + 1
+                        -- Record in transfer details
+                        if not transferDetails[item.typeName] then
+                            transferDetails[item.typeName] = {
+                                itemType = item.itemType,
+                                displayName = item.displayName,
+                                count = 0,
+                                containers = {},
+                            }
+                        end
+                        transferDetails[item.typeName].count = transferDetails[item.typeName].count + 1
+                        transferDetails[item.typeName].containers[data.label or "Overflow"] = true
+                        break
+                    end
+                end
+            end
+        end
+
+        -- Count overflow results
+        local overflowContainerCount = 0
+        for _ in pairs(overflowContainersUsed) do overflowContainerCount = overflowContainerCount + 1 end
+
+        -- Wait for overflow replication, then show combined results
+        waitForReplication(playerInv, remainingCount, function(overflowTransferred)
+            showResults(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount)
+        end)
+    end
+
+    -- Wait for pass 1 replication if needed, then run overflow pass
+    if actualTransferred <= 0 and numContainers > 0 then
+        waitForReplication(playerInv, totalItemsBefore, function(confirmedCount)
+            doOverflowPass(confirmedCount, numContainers)
+        end)
+    else
+        doOverflowPass(actualTransferred, numContainers)
     end
 end
 
@@ -861,17 +979,232 @@ local function doQuickStackOpen()
     local afterItems = playerInv:GetItems()
     local actualTransferred = totalItemsBefore - #afterItems
     if actualTransferred <= 0 then
-        -- Non-host clients may have stale inventory data — retry after 500ms
-        ExecuteWithDelay(500, function()
-            ExecuteInGameThread(function()
-                local delayedItems = playerInv:GetItems()
-                local delayedCount = totalItemsBefore - #delayedItems
-                if delayedCount <= 0 then
-                    utils.Notify("No matching items for this container", config)
-                end
-            end)
+        waitForReplication(playerInv, totalItemsBefore, function(confirmedCount)
+            if confirmedCount <= 0 then
+                utils.Notify("No matching items for this container", config)
+            end
         end)
     end
+end
+
+--- Sort overflow: move items from %o lockers into nearby matching lockers
+local function doSortOverflow()
+    local pawn = utils.GetPlayerPawn()
+    if not pawn then return end
+
+    -- Whitelisted container classes
+    local containerSources = {
+        { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
+        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
+    }
+
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+    local overflowLockers = {}
+    local targetLockers = {}
+
+    -- Scan for overflow and target lockers
+    for _, source in ipairs(containerSources) do
+        local actors = FindAllOf(source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor:IsValid() then
+                    local dist = utils.GetDistance(pawn, actor)
+                    if dist <= radiusUnits then
+                        local ok, inv = pcall(function() return source.getInv(actor) end)
+                        if ok and inv and inv:IsValid() then
+                            local rawLabel = nil
+                            if source.hasLabel then
+                                local ok2, lbl = pcall(function() return getLockerLabel(actor) end)
+                                if ok2 then rawLabel = lbl end
+                            end
+
+                            -- Skip excluded
+                            if rawLabel and config.ExcludePrefix ~= "" then
+                                if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
+                                    goto nextOverflowActor
+                                end
+                            end
+
+                            -- Collect overflow lockers as sources
+                            if rawLabel and config.OverflowPrefix ~= "" then
+                                if rawLabel:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
+                                    table.insert(overflowLockers, {
+                                        inventory = inv,
+                                        inventoryId = inv.InventoryId,
+                                        label = rawLabel,
+                                    })
+                                    goto nextOverflowActor
+                                end
+                            end
+
+                            -- Everything else is a target
+                            local label = nil
+                            if rawLabel and config.LabelRouting then
+                                if config.LabelPrefix == "" then
+                                    label = rawLabel
+                                else
+                                    local prefixLen = #config.LabelPrefix
+                                    if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
+                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
+                                        if label == "" then label = nil end
+                                    end
+                                end
+                            end
+                            table.insert(targetLockers, {
+                                inventory = inv,
+                                inventoryId = inv.InventoryId,
+                                label = label,
+                            })
+                        end
+                    end
+                    ::nextOverflowActor::
+                end
+            end
+        end
+    end
+
+    if #overflowLockers == 0 then
+        utils.Notify("No overflow lockers nearby", config)
+        return
+    end
+
+    if #targetLockers == 0 then
+        utils.Notify("No target lockers nearby", config)
+        return
+    end
+
+    -- Snapshot target locker contents for type-count matching
+    local targetTypeData = {}
+    local targetItemCount = {}
+    local targetMaxItems = {}
+    local targetLabels = {}
+    for i, data in ipairs(targetLockers) do
+        targetTypeData[i] = {}
+        targetLabels[i] = data.label
+        targetItemCount[i] = 0
+        local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
+        targetMaxItems[i] = (ok0 and maxItems) or 30
+        local ok, items = pcall(function() return data.inventory:GetItems() end)
+        if ok and items then
+            targetItemCount[i] = #items
+            for _, item in ipairs(items) do
+                local s = item:get()
+                if s.ItemType then
+                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                    if ok2 then
+                        targetTypeData[i][typeName] = (targetTypeData[i][typeName] or 0) + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- Sort items from each overflow locker into targets
+    local transferDetails = {}
+    local totalMoved = 0
+    local containersUsed = {}
+    local someFull = false
+
+    for _, overflowData in ipairs(overflowLockers) do
+        local ok, overflowItems = pcall(function() return overflowData.inventory:GetItems() end)
+        if not ok or not overflowItems then goto nextOverflowLocker end
+        local totalBeforeThisLocker = #overflowItems
+
+        for _, rawItem in ipairs(overflowItems) do
+            local s = rawItem:get()
+            if not s.ItemType then goto nextOverflowItem end
+
+            local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+            if not ok2 then goto nextOverflowItem end
+
+            local displayName = nil
+            pcall(function() displayName = s.ItemType.Name:ToString() end)
+            if not displayName or displayName == "" then
+                displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+            end
+
+            -- Find best target (same scoring as main transfer)
+            local bestLabelScore = 0
+            local bestLabelIdx = nil
+            local bestUnlabeledIdx = nil
+            local bestUnlabeledCount = 0
+
+            for i, data in ipairs(targetLockers) do
+                if targetItemCount[i] >= targetMaxItems[i] then
+                    someFull = true
+                else
+                    local labelScore = 0
+                    if targetLabels[i] then
+                        labelScore = scoreLockerMatch(targetLabels[i], displayName)
+                        if labelScore > bestLabelScore then
+                            bestLabelScore = labelScore
+                            bestLabelIdx = i
+                        end
+                    end
+                    if labelScore == 0 then
+                        local typeCount = targetTypeData[i][typeName] or 0
+                        if typeCount > 0 and typeCount > bestUnlabeledCount then
+                            bestUnlabeledCount = typeCount
+                            bestUnlabeledIdx = i
+                        end
+                    end
+                end
+            end
+
+            local bestIdx = bestLabelIdx or bestUnlabeledIdx
+            if bestIdx then
+                local targetData = targetLockers[bestIdx]
+                local ok3 = pcall(function()
+                    overflowData.inventory:MoveItemBetweenInventories(
+                        s.ItemId, s.InventoryId, targetData.inventoryId)
+                end)
+                if ok3 then
+                    containersUsed[bestIdx] = true
+                    targetTypeData[bestIdx][typeName] = (targetTypeData[bestIdx][typeName] or 0) + 1
+                    targetItemCount[bestIdx] = targetItemCount[bestIdx] + 1
+                    totalMoved = totalMoved + 1
+                    -- Record transfer details
+                    if not transferDetails[typeName] then
+                        transferDetails[typeName] = {
+                            itemType = s.ItemType,
+                            displayName = displayName,
+                            count = 0,
+                            containers = {},
+                        }
+                    end
+                    transferDetails[typeName].count = transferDetails[typeName].count + 1
+                    local targetLabel = targetLabels[bestIdx] or "Unlabeled"
+                    transferDetails[typeName].containers[targetLabel] = true
+                end
+            end
+
+            ::nextOverflowItem::
+        end
+
+        ::nextOverflowLocker::
+    end
+
+    if totalMoved == 0 then
+        utils.Notify("No items could be sorted from overflow", config)
+        return
+    end
+
+    local numContainers = 0
+    for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
+
+    -- Use waitForReplication on first overflow locker to confirm moves
+    local firstOverflow = overflowLockers[1]
+    local firstOverflowCount = 0
+    pcall(function() firstOverflowCount = #firstOverflow.inventory:GetItems() end)
+
+    -- Show results (wait for replication if needed)
+    local itm = totalMoved == 1 and "item" or "items"
+    local ctr = numContainers == 1 and "container" or "containers"
+    local msg = string.format("Sorted %d %s from overflow to %d %s", totalMoved, itm, numContainers, ctr)
+    if someFull then msg = msg .. " (some full)" end
+
+    utils.Notify(msg, config)
+    showTransferSummary(transferDetails)
 end
 
 --- Check if any text input field has keyboard focus
@@ -926,5 +1259,22 @@ RegisterKeyBind(bindKeyOpen, function()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
         doQuickStackOpen()
+    end)
+end)
+
+-- Keybind: H for Sort Overflow lockers
+local bindKeyOverflow = keyMap[config.KeybindOverflow]
+if not bindKeyOverflow then
+    print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
+    bindKeyOverflow = Key.H
+end
+
+RegisterKeyBind(bindKeyOverflow, function()
+    ExecuteInGameThread(function()
+        if isTextInputFocused() then return end
+        local now = os.clock()
+        if now - lastActivation < config.Cooldown then return end
+        lastActivation = now
+        doSortOverflow()
     end)
 end)
