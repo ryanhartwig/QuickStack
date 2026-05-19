@@ -14,6 +14,7 @@ config.LabelPrefix = ""
 config.ExcludePrefix = "%x"
 config.LabelRouting = true
 config.BatterySwap = true
+config.LabelMaxChars = 50
 config.SummaryPanel = true
 config.SummaryShowDestination = true
 config.SummaryDuration = 6
@@ -74,6 +75,8 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
+                elseif key == "label_max_chars" then
+                    config.LabelMaxChars = tonumber(value) or 50
                 elseif key == "summary_panel" then
                     config.SummaryPanel = (value == "true")
                 elseif key == "summary_show_destination" then

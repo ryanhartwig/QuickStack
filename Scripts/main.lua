@@ -886,9 +886,31 @@ local function isTextInputFocused()
     return false
 end
 
+--- Override locker label character limit
+--- The game defaults to 15 chars which is restrictive for comma-separated labels
+--- Patches all existing popup instances; re-runs on each keybind press to catch new ones
+local labelLimitPatched = {}
+local function patchLabelLimit()
+    if not config.LabelMaxChars or config.LabelMaxChars <= 0 then return end
+    local popups = FindAllOf("WBP_ChangeLabelPopup_C")
+    if not popups then return end
+    for _, popup in ipairs(popups) do
+        if popup:IsValid() then
+            local addr = tostring(popup)
+            if not labelLimitPatched[addr] then
+                pcall(function()
+                    popup.LabelEditBox.MaxNumChars = config.LabelMaxChars
+                    labelLimitPatched[addr] = true
+                end)
+            end
+        end
+    end
+end
+
 -- Keybind: N for Quick Stack (nearby containers + battery swap)
 RegisterKeyBind(bindKey, function()
     ExecuteInGameThread(function()
+        patchLabelLimit()
         if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
@@ -906,6 +928,7 @@ end
 
 RegisterKeyBind(bindKeyOpen, function()
     ExecuteInGameThread(function()
+        patchLabelLimit()
         if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
