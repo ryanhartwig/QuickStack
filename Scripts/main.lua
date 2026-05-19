@@ -614,7 +614,9 @@ local function showTransferSummary(transferDetails)
             if #labels > 0 then
                 local text2 = make(textCls, "Dest")
                 if text2 then
-                    local destStr = " -> " .. table.concat(labels, ", ")
+                    local destRaw = table.concat(labels, ", ")
+                    if #destRaw > 15 then destRaw = destRaw:sub(1, 15) .. "..." end
+                    local destStr = " -> " .. destRaw
                     pcall(function() text2:SetText(FText(destStr)) end)
                     pcall(function() hbox:AddChildToHorizontalBox(text2) end)
                 end
@@ -887,30 +889,19 @@ local function isTextInputFocused()
 end
 
 --- Override locker label character limit
---- The game defaults to 15 chars which is restrictive for comma-separated labels
---- Patches all existing popup instances; re-runs on each keybind press to catch new ones
-local labelLimitPatched = {}
-local function patchLabelLimit()
-    if not config.LabelMaxChars or config.LabelMaxChars <= 0 then return end
-    local popups = FindAllOf("WBP_ChangeLabelPopup_C")
-    if not popups then return end
-    for _, popup in ipairs(popups) do
-        if popup:IsValid() then
-            local addr = tostring(popup)
-            if not labelLimitPatched[addr] then
-                pcall(function()
-                    popup.LabelEditBox.MaxNumChars = config.LabelMaxChars
-                    labelLimitPatched[addr] = true
-                end)
-            end
-        end
-    end
+--- The game defaults to 15 chars; patch at creation time via NotifyOnNewObject
+--- so the limit is raised before any label text is loaded into the field
+if config.LabelMaxChars and config.LabelMaxChars > 0 then
+    NotifyOnNewObject("/Script/UWECommonUI.UWEEditableTextBoxWithValidation", function(editBox)
+        pcall(function()
+            editBox.MaxNumChars = config.LabelMaxChars
+        end)
+    end)
 end
 
 -- Keybind: N for Quick Stack (nearby containers + battery swap)
 RegisterKeyBind(bindKey, function()
     ExecuteInGameThread(function()
-        patchLabelLimit()
         if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
@@ -928,7 +919,6 @@ end
 
 RegisterKeyBind(bindKeyOpen, function()
     ExecuteInGameThread(function()
-        patchLabelLimit()
         if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
