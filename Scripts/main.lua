@@ -533,12 +533,15 @@ end
 --- Transfer Summary UI panel
 local activeSummaryPanel = nil  -- track current panel for replacement
 
-local function showTransferSummary(transferDetails)
+local function showTransferSummary(transferDetails, overflowDetails)
     -- Skip if disabled or nothing transferred
     if not config.SummaryPanel then return end
+    overflowDetails = overflowDetails or {}
     local count = 0
     for _ in pairs(transferDetails) do count = count + 1 end
-    if count == 0 then return end
+    local overflowCount = 0
+    for _ in pairs(overflowDetails) do overflowCount = overflowCount + 1 end
+    if count == 0 and overflowCount == 0 then return end
 
     -- Remove previous panel if still visible
     if activeSummaryPanel then
@@ -592,61 +595,95 @@ local function showTransferSummary(transferDetails)
         end
     end)
 
-    -- Build rows from transferDetails, sorted by count descending
-    local sorted = {}
-    for typeName, detail in pairs(transferDetails) do
-        table.insert(sorted, { typeName = typeName, detail = detail })
+    -- Helper to build rows from a details table
+    local function buildRows(details, prefix)
+        local sorted = {}
+        for typeName, detail in pairs(details) do
+            table.insert(sorted, { typeName = typeName, detail = detail })
+        end
+        table.sort(sorted, function(a, b) return a.detail.count > b.detail.count end)
+
+        for _, entry in ipairs(sorted) do
+            local detail = entry.detail
+            local hbox = make(hboxCls, prefix .. "HBox")
+            if not hbox then break end
+
+            -- Item icon (constrained to 32x32)
+            if imgCls and detail.itemType then
+                local img = make(imgCls, prefix .. "Img")
+                if img then
+                    pcall(function() img:SetBrushFromSoftTexture(detail.itemType.Thumbnail, false) end)
+                    pcall(function() img:SetDesiredSizeOverride({ X = 32, Y = 32 }) end)
+                    pcall(function()
+                        local imgSlot = hbox:AddChildToHorizontalBox(img)
+                        if imgSlot then
+                            imgSlot:SetPadding({ Left = 4, Top = 2, Right = 8, Bottom = 2 })
+                            imgSlot:SetSize({ Value = 0, SizeRule = 0 })
+                        end
+                    end)
+                end
+            end
+
+            -- Item name + count
+            local cleanName = detail.displayName or entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
+            local text1 = make(textCls, prefix .. "Name")
+            if text1 then
+                pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
+                pcall(function() hbox:AddChildToHorizontalBox(text1) end)
+            end
+
+            -- Container label
+            if config.SummaryShowDestination then
+                local labels = {}
+                for label, _ in pairs(detail.containers) do
+                    table.insert(labels, label)
+                end
+                if #labels > 0 then
+                    local text2 = make(textCls, prefix .. "Dest")
+                    if text2 then
+                        local destRaw = table.concat(labels, ", ")
+                        if #destRaw > 15 then destRaw = destRaw:sub(1, 15) .. "..." end
+                        pcall(function() text2:SetText(FText(" -> " .. destRaw)) end)
+                        pcall(function() hbox:AddChildToHorizontalBox(text2) end)
+                    end
+                end
+            end
+
+            pcall(function() vbox:AddChildToVerticalBox(hbox) end)
+        end
     end
-    table.sort(sorted, function(a, b) return a.detail.count > b.detail.count end)
 
-    for _, entry in ipairs(sorted) do
-        local detail = entry.detail
-        local hbox = make(hboxCls, "HBox")
-        if not hbox then break end
+    -- Overflow first (most important for user to see)
+    if overflowCount > 0 then
+        local sepText = make(textCls, "Sep1")
+        if sepText then
+            pcall(function() sepText:SetText(FText("── Overflow ──")) end)
+            pcall(function()
+                local sepSlot = vbox:AddChildToVerticalBox(sepText)
+                if sepSlot then
+                    sepSlot:SetPadding({ Left = 4, Top = 2, Right = 0, Bottom = 2 })
+                end
+            end)
+        end
+        buildRows(overflowDetails, "O")
+    end
 
-        -- Item icon (constrained to 32x32)
-        if imgCls and detail.itemType then
-            local img = make(imgCls, "Img")
-            if img then
-                pcall(function() img:SetBrushFromSoftTexture(detail.itemType.Thumbnail, false) end)
-                pcall(function() img:SetDesiredSizeOverride({ X = 32, Y = 32 }) end)
+    -- Normal transfers below
+    if count > 0 then
+        if overflowCount > 0 then
+            -- Separator only if overflow was shown above
+            local sepText = make(textCls, "Sep2")
+            if sepText then
+                pcall(function() sepText:SetText(FText("── Sorted ──")) end)
                 pcall(function()
-                    local imgSlot = hbox:AddChildToHorizontalBox(img)
-                    if imgSlot then
-                        imgSlot:SetPadding({ Left = 4, Top = 2, Right = 8, Bottom = 2 })
-                        imgSlot:SetSize({ Value = 0, SizeRule = 0 })  -- Auto size (don't stretch)
+                    local sepSlot = vbox:AddChildToVerticalBox(sepText)
+                    if sepSlot then
+                        sepSlot:SetPadding({ Left = 4, Top = 6, Right = 0, Bottom = 2 })
                     end
                 end)
             end
         end
-
-        -- Item name + count (e.g. "Titanium x3")
-        local cleanName = entry.detail.displayName or entry.typeName:gsub("^DA_", ""):gsub("_ItemType$", ""):gsub("_", " ")
-        local text1 = make(textCls, "Name")
-        if text1 then
-            pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
-            pcall(function() hbox:AddChildToHorizontalBox(text1) end)
-        end
-
-        -- Container label (e.g. " -> Materials")
-        if config.SummaryShowDestination then
-            local labels = {}
-            for label, _ in pairs(detail.containers) do
-                table.insert(labels, label)
-            end
-            if #labels > 0 then
-                local text2 = make(textCls, "Dest")
-                if text2 then
-                    local destRaw = table.concat(labels, ", ")
-                    if #destRaw > 15 then destRaw = destRaw:sub(1, 15) .. "..." end
-                    local destStr = " -> " .. destRaw
-                    pcall(function() text2:SetText(FText(destStr)) end)
-                    pcall(function() hbox:AddChildToHorizontalBox(text2) end)
-                end
-            end
-        end
-
-        pcall(function() vbox:AddChildToVerticalBox(hbox) end)
+        buildRows(transferDetails, "N")
     end
 
     -- Display with slide-in + fade-in animation
@@ -828,7 +865,7 @@ local function doQuickStack()
     end
 
     -- Function to show results (called after all passes complete)
-    local function showResults(totalTransferred, totalContainers)
+    local function showResults(totalTransferred, totalContainers, overflowDetails)
         if totalTransferred == 0 and swapCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
             utils.Notify("No matching containers nearby", config)
         elseif totalTransferred == 0 and swapCount == 0 then
@@ -851,7 +888,7 @@ local function doQuickStack()
             if #parts > 0 then
                 utils.Notify(table.concat(parts, " | "), config)
             end
-            showTransferSummary(transferDetails)
+            showTransferSummary(transferDetails, overflowDetails)
         end
     end
 
@@ -889,6 +926,7 @@ local function doQuickStack()
         end
 
         local overflowContainersUsed = {}
+        local overflowDetails = {}
         for _, item in ipairs(remainingItems) do
             for i, data in ipairs(overflowLockers) do
                 if overflowItemCount[i] < overflowMaxItems[i] then
@@ -898,17 +936,17 @@ local function doQuickStack()
                     if ok then
                         overflowContainersUsed[i] = true
                         overflowItemCount[i] = overflowItemCount[i] + 1
-                        -- Record in transfer details
-                        if not transferDetails[item.typeName] then
-                            transferDetails[item.typeName] = {
+                        -- Record in overflow details (separate from normal transfers)
+                        if not overflowDetails[item.typeName] then
+                            overflowDetails[item.typeName] = {
                                 itemType = item.itemType,
                                 displayName = item.displayName,
                                 count = 0,
                                 containers = {},
                             }
                         end
-                        transferDetails[item.typeName].count = transferDetails[item.typeName].count + 1
-                        transferDetails[item.typeName].containers[data.label or "Overflow"] = true
+                        overflowDetails[item.typeName].count = overflowDetails[item.typeName].count + 1
+                        overflowDetails[item.typeName].containers[data.label or "Overflow"] = true
                         break
                     end
                 end
@@ -921,7 +959,7 @@ local function doQuickStack()
 
         -- Wait for overflow replication, then show combined results
         waitForReplication(playerInv, remainingCount, function(overflowTransferred)
-            showResults(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount)
+            showResults(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount, overflowDetails)
         end)
     end
 
