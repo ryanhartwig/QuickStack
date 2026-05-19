@@ -173,7 +173,9 @@ local function scoreLockerMatch(label, displayName)
     for part in label:gmatch("[^,]+") do
         local tokens = {}
         for token in part:lower():gmatch("%S+") do
-            table.insert(tokens, token)
+            if not token:match("^%d+$") then  -- skip pure numbers (locker identifiers like "1", "2")
+                table.insert(tokens, token)
+            end
         end
         if #tokens == 0 then goto nextPart end
 
