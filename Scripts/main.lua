@@ -857,7 +857,16 @@ local function doQuickStackOpen()
     local afterItems = playerInv:GetItems()
     local actualTransferred = totalItemsBefore - #afterItems
     if actualTransferred <= 0 then
-        utils.Notify("No matching items for this container", config)
+        -- Non-host clients may have stale inventory data — retry after 500ms
+        ExecuteWithDelay(500, function()
+            ExecuteInGameThread(function()
+                local delayedItems = playerInv:GetItems()
+                local delayedCount = totalItemsBefore - #delayedItems
+                if delayedCount <= 0 then
+                    utils.Notify("No matching items for this container", config)
+                end
+            end)
+        end)
     end
 end
 
