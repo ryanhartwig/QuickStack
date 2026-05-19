@@ -321,13 +321,16 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
             if lockerItemCount[i] >= lockerMaxItems[i] then
                 someFull = true
             else
+                local labelScore = 0
                 if lockerLabels[i] then
-                    local score = scoreLockerMatch(lockerLabels[i], item.displayName)
-                    if score > bestLabelScore then
-                        bestLabelScore = score
+                    labelScore = scoreLockerMatch(lockerLabels[i], item.displayName)
+                    if labelScore > bestLabelScore then
+                        bestLabelScore = labelScore
                         bestLabelIdx = i
                     end
-                else
+                end
+                -- Type-count fallback: unlabeled lockers OR labeled lockers that don't match
+                if labelScore == 0 then
                     local typeCount = lockerTypeData[i][item.typeName] or 0
                     if typeCount > 0 and typeCount > bestUnlabeledCount then
                         bestUnlabeledCount = typeCount
