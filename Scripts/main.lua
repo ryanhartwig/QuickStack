@@ -870,14 +870,16 @@ local function doQuickStackOpen()
     end
 end
 
---- Check if the player is in a UI/menu
-local function isInUI()
-    local popups = FindAllOf("WBP_ChangeLabelPopup_C")
-    if popups then
-        for _, popup in ipairs(popups) do
-            if popup:IsValid() then
-                local ok, active = pcall(function() return popup:IsActivated() end)
-                if ok and active then return true end
+--- Check if any text input field has keyboard focus
+--- Suppresses hotkeys during label editing, F8 bug reports, chat, etc.
+--- Does NOT suppress when inventory or container UI is open (no text input focused)
+local function isTextInputFocused()
+    local inputs = FindAllOf("EditableTextBox")
+    if inputs then
+        for _, widget in ipairs(inputs) do
+            if widget:IsValid() then
+                local ok, focused = pcall(function() return widget:HasKeyboardFocus() end)
+                if ok and focused then return true end
             end
         end
     end
@@ -887,7 +889,7 @@ end
 -- Keybind: N for Quick Stack (nearby containers + battery swap)
 RegisterKeyBind(bindKey, function()
     ExecuteInGameThread(function()
-        if isInUI() then return end
+        if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
@@ -904,7 +906,7 @@ end
 
 RegisterKeyBind(bindKeyOpen, function()
     ExecuteInGameThread(function()
-        if isInUI() then return end
+        if isTextInputFocused() then return end
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
