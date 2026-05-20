@@ -13,19 +13,64 @@ local BATTERY_PATTERNS = {"battery", "powercell", "powercellv2"}
 
 -- Consumable patterns by category
 local FOOD_PATTERNS = {
-    "nutrient", "block", "pavlova", "souvlaki", "temaki", "chutney",
-    "jerky", "salad", "saturn", "mash", "clump", "shavings", "cookie",
+    -- Cooked dishes (crafted)
+    "pavlova", "souvlaki", "temaki", "chutney", "jerky", "salad",
+    "saturn", "mash", "clump", "shavings", "cookie", "nutrient",
+    -- Cooked fish (all CookedX items)
+    "cooked",
+    -- Raw fish / edible creatures
+    "halfmoon", "geordie", "houndgar", "sandspear", "quadrate",
+    "spineytail", "pneumo", "bluemoon", "harvestmoon",
 }
-local DRINK_PATTERNS = { "water", "isotonic", "drink" }
+local DRINK_PATTERNS = { "water", "isotonic", "drink", "filtered" }
 local HEAL_PATTERNS = { "firstaid", "first_aid", "medkit", "med_kit" }
 
--- Priority order (lower index = better). Used for restock preference.
+-- Priority order (lower index = better). Based on actual in-game food/water/heal values.
+-- Food values sourced from https://wiki.subnautica.com/sn2/Food
 categories.FOOD_PRIORITY = {
-    "pavlova", "souvlaki", "temaki", "chutney", "jerky", "salad",
-    "saturn", "mash", "clump", "shavings", "cookie", "block",
+    -- Prepared meals (crafted)
+    "pavlova",          -- +80 food, +70 water, +10 health (best in game)
+    "cookie",           -- +65 food (CoralCookie = Coral Mash)
+    "temaki",           -- +60 food, +15 water
+    "chutney",          -- +40 food
+    "souvlaki",         -- +40 food
+    "jerky",            -- +40 food
+    "clump",            -- +40 food, +40 water (Deepwing Egg Clump)
+    -- Cooked fish + nutrient block (moderate)
+    "cookedpneumo",     -- +40 food
+    "nutrient",         -- +40 food (Nutrient Block)
+    "cookedgeordie",    -- +30 food (also CookedElectricGeordie, CookedBlackHoverthorn)
+    "cookedharvestmoon",-- +30 food
+    "cookedbluemoon",   -- +25 food, +5 water
+    "cookedhalfmoon",   -- +25 food
+    "cookedspineytail", -- +25 food (Cooked Hoverthorn)
+    "cookedquadrate",   -- cooked fish
+    "salad",            -- +20 food (Oily Salad)
+    "saturn",           -- +10 food (Sugar of Saturn)
+    -- Raw fish (emergency food, negative water)
+    "pneumo",           -- +25 food, -5 water
+    "geordie",          -- +20 food, -5 water
+    "harvestmoon",      -- +20 food, -5 water
+    "halfmoon",         -- +15 food, -5 water
+    "spineytail",       -- +15 food, -5 water
+    "houndgar",         -- raw fish
+    "sandspear",        -- raw fish
+    "quadrate",         -- raw fish
+    "bluemoon",         -- +10 food, +5 water
+    "shavings",         -- +3 food (Coral Shavings, worst)
 }
-categories.DRINK_PRIORITY = { "isotonic", "water" }
-categories.HEAL_PRIORITY = { "enhanced", "advanced", "basic", "firstaid", "medkit" }
+categories.DRINK_PRIORITY = {
+    "isotonic",         -- +55 water
+    "filtered",         -- Filtered Water Packet
+    "water",            -- +40 water
+}
+categories.HEAL_PRIORITY = {
+    "enhanced",         -- +100 health (Enhanced First Aid Kit)
+    "advanced",         -- future-proofing
+    "basic",            -- +50 health (Basic First Aid Kit)
+    "firstaid",
+    "medkit",
+}
 
 function categories.isBatteryType(typeName)
     local lname = string.lower(typeName)
