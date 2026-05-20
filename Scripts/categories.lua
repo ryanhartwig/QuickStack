@@ -123,11 +123,15 @@ function categories.shouldKeepItem(typeName, fullName)
         if string.find(lname, "/deployables/", 1, true) then return true end
     end
 
+    -- Batteries: protected by equipment setting OR battery swap setting
+    -- Even with stack_equipment=true, battery swap needs them in inventory
+    if categories.isBatteryType(typeName) then
+        if not config.StackEquipment or config.BatterySwap then return true end
+    end
+
     if not config.StackConsumables then
         if categories.getConsumableCategory(typeName) then return true end
     end
-
-    if config.BatterySwap and categories.isBatteryType(typeName) then return true end
 
     for _, keepType in ipairs(config.KeepTypes) do
         if typeName == keepType then return true end
