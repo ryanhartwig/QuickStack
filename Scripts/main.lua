@@ -171,6 +171,8 @@ end
 local function getTransferableItems(playerInv)
     local items = playerInv:GetItems()
     local transferable = {}
+    local heldConsumables = {}  -- consumables kept by shouldKeepItem, sorted later for budget trimming
+
     for _, playerItem in ipairs(items) do
         local s = playerItem:get()
         if s.ItemType then
@@ -178,26 +180,64 @@ local function getTransferableItems(playerInv)
             if ok then
                 local ok2, fullName = pcall(function() return s.ItemType:GetFullName() end)
                 local fName = ok2 and fullName or ""
+
+                local displayName = nil
+                pcall(function() displayName = s.ItemType.Name:ToString() end)
+                if not displayName or displayName == "" then
+                    displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+                end
+
+                local itemData = {
+                    typeName = typeName,
+                    displayName = displayName,
+                    fullName = fName,
+                    itemId = s.ItemId,
+                    inventoryId = s.InventoryId,
+                    itemType = s.ItemType,
+                    count = s.Count or 1,
+                }
+
                 if not shouldKeepItem(typeName, fName) then
-                    -- Resolve localized display name via FText:ToString()
-                    local displayName = nil
-                    pcall(function() displayName = s.ItemType.Name:ToString() end)
-                    if not displayName or displayName == "" then
-                        displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+                    table.insert(transferable, itemData)
+                else
+                    -- Track consumables for budget trimming
+                    local cat = categories.getConsumableCategory(typeName)
+                    if cat then
+                        itemData.category = cat
+                        itemData.priority = categories.getPriority(typeName, cat)
+                        table.insert(heldConsumables, itemData)
                     end
-                    table.insert(transferable, {
-                        typeName = typeName,
-                        displayName = displayName,
-                        fullName = fName,
-                        itemId = s.ItemId,
-                        inventoryId = s.InventoryId,
-                        itemType = s.ItemType,
-                        count = s.Count or 1,
-                    })
                 end
             end
         end
     end
+
+    -- Budget trimming: if player holds more consumables than budget, transfer the worst
+    local budgets = {
+        food  = config.RestockFoodCount or 0,
+        drink = config.RestockDrinkCount or 0,
+        heal  = config.RestockHealCount or 0,
+    }
+
+    -- Group by category
+    local byCat = { food = {}, drink = {}, heal = {} }
+    for _, item in ipairs(heldConsumables) do
+        if byCat[item.category] then
+            table.insert(byCat[item.category], item)
+        end
+    end
+
+    -- For each category, sort by priority (best first), keep budget, transfer excess
+    for cat, catItems in pairs(byCat) do
+        if budgets[cat] > 0 and #catItems > budgets[cat] then
+            table.sort(catItems, function(a, b) return a.priority < b.priority end)
+            -- Items beyond the budget get transferred (worst ones)
+            for i = budgets[cat] + 1, #catItems do
+                table.insert(transferable, catItems[i])
+            end
+        end
+    end
+
     return transferable, #items
 end
 

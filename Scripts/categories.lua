@@ -25,7 +25,7 @@ categories.FOOD_PRIORITY = {
     "saturn", "mash", "clump", "shavings", "cookie", "block",
 }
 categories.DRINK_PRIORITY = { "isotonic", "water" }
-categories.HEAL_PRIORITY = {}  -- all equal for now (only basic medkit in EA)
+categories.HEAL_PRIORITY = { "enhanced", "advanced", "basic", "firstaid", "medkit" }
 
 function categories.isBatteryType(typeName)
     local lname = string.lower(typeName)
