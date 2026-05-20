@@ -698,7 +698,23 @@ local function doQuickStack()
         local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
         if not restockEnabled or #restockCandidates == 0 then return restockDetails end
 
-        -- Count player's current consumables
+        local playerInvId = playerInv.InventoryId
+
+        local function recordRestock(candidate)
+            if not restockDetails[candidate.typeName] then
+                restockDetails[candidate.typeName] = {
+                    itemType = candidate.itemType,
+                    displayName = candidate.displayName,
+                    count = 0,
+                    containers = {},
+                }
+            end
+            restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
+            restockDetails[candidate.typeName].containers["Locker"] = true
+        end
+
+        -- Scan player's current consumables with full item data
+        local heldByCategory = { food = {}, drink = {}, heal = {} }
         local currentCounts = { food = 0, drink = 0, heal = 0 }
         local playerItems = playerInv:GetItems()
         for _, item in ipairs(playerItems) do
@@ -707,30 +723,34 @@ local function doQuickStack()
                 local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
                 if ok then
                     local cat = categories.getConsumableCategory(typeName)
-                    if cat then currentCounts[cat] = currentCounts[cat] + 1 end
+                    if cat then
+                        currentCounts[cat] = currentCounts[cat] + 1
+                        table.insert(heldByCategory[cat], {
+                            itemId = s.ItemId,
+                            inventoryId = s.InventoryId,
+                            typeName = typeName,
+                            priority = categories.getPriority(typeName, cat),
+                        })
+                    end
                 end
             end
         end
 
-        -- Determine shortfalls
+        -- Sort candidates best first, held items worst first
+        table.sort(restockCandidates, function(a, b) return a.priority < b.priority end)
+        for _, items in pairs(heldByCategory) do
+            table.sort(items, function(a, b) return a.priority > b.priority end)
+        end
+
+        -- Phase 1: Fill shortfalls (pull best from lockers)
         local budgets = {
             food  = math.max(0, (config.RestockFoodCount or 0)  - currentCounts.food),
             drink = math.max(0, (config.RestockDrinkCount or 0) - currentCounts.drink),
             heal  = math.max(0, (config.RestockHealCount or 0)  - currentCounts.heal),
         }
 
-        local anyShortfall = false
-        for _, v in pairs(budgets) do
-            if v > 0 then anyShortfall = true; break end
-        end
-        if not anyShortfall then return restockDetails end
-
-        -- Sort candidates by priority (best first)
-        table.sort(restockCandidates, function(a, b) return a.priority < b.priority end)
-
-        -- Pull best candidates to fill shortfalls
-        local playerInvId = playerInv.InventoryId
-        for _, candidate in ipairs(restockCandidates) do
+        local usedCandidates = {}
+        for i, candidate in ipairs(restockCandidates) do
             local cat = candidate.category
             if budgets[cat] and budgets[cat] > 0 then
                 local ok = pcall(function()
@@ -739,21 +759,54 @@ local function doQuickStack()
                 end)
                 if ok then
                     budgets[cat] = budgets[cat] - 1
-                    -- Record in restock details
-                    if not restockDetails[candidate.typeName] then
-                        restockDetails[candidate.typeName] = {
-                            itemType = candidate.itemType,
-                            displayName = candidate.displayName,
-                            count = 0,
-                            containers = {},
-                        }
-                    end
-                    restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
-                    -- Use locker label or "Locker" as source
-                    local sourceName = "Locker"
-                    restockDetails[candidate.typeName].containers[sourceName] = true
+                    usedCandidates[i] = true
+                    recordRestock(candidate)
                 end
             end
+        end
+
+        -- Phase 2: Upgrade — swap player's worst for locker's best if better
+        for _, cat in ipairs({"food", "drink", "heal"}) do
+            local held = heldByCategory[cat]
+            if #held == 0 then goto nextCat end
+
+            for _, candidate in ipairs(restockCandidates) do
+                if usedCandidates[_] then goto nextCandidate end
+                if candidate.category ~= cat then goto nextCandidate end
+
+                -- Find player's worst item in this category
+                local worst = held[1]  -- sorted worst first
+                if not worst or candidate.priority >= worst.priority then
+                    break  -- no upgrade possible (candidates sorted best first)
+                end
+
+                -- Swap: stash worst to candidate's source locker, pull candidate
+                local stashOk = pcall(function()
+                    playerInv:MoveItemBetweenInventories(
+                        worst.itemId, worst.inventoryId, candidate.inventoryId)
+                end)
+                if stashOk then
+                    local pullOk = pcall(function()
+                        playerInv:MoveItemBetweenInventories(
+                            candidate.itemId, candidate.inventoryId, playerInvId)
+                    end)
+                    if pullOk then
+                        usedCandidates[_] = true
+                        table.remove(held, 1)  -- remove worst from tracking
+                        recordRestock(candidate)
+                    else
+                        -- Pull failed, reverse the stash
+                        pcall(function()
+                            playerInv:MoveItemBetweenInventories(
+                                worst.itemId, candidate.inventoryId, worst.inventoryId)
+                        end)
+                    end
+                end
+
+                ::nextCandidate::
+            end
+
+            ::nextCat::
         end
 
         return restockDetails
