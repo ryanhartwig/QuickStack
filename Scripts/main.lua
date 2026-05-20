@@ -55,16 +55,6 @@ do
           description="How long the summary panel stays on screen.",
           type="slider", default=6, min=2, max=15, step=1, format="integer",
           enabled_by="summary_panel" },
-
-        { key="keybind", title="Quick Stack Key",
-          description="Key to quick-stack to nearby containers.",
-          type="keybind", default="N" },
-        { key="keybind_open", title="Open Container Key",
-          description="Key to quick-stack into the currently open container.",
-          type="keybind", default="G" },
-        { key="keybind_overflow", title="Sort Overflow Key",
-          description="Key to sort overflow locker contents into nearby matching lockers.",
-          type="keybind", default="H" },
     },
 }
 ]=], VERSION)
@@ -1207,73 +1197,48 @@ if config.LabelMaxChars and config.LabelMaxChars > 0 then
     end)
 end
 
--- Keybind registration
--- Two modes: with SN2ModSettings (dispatcher pattern for live rebinding)
---            without SN2ModSettings (register configured keys only)
-
-local function handleKeyPress(keyName)
-    if isTextInputFocused() then return end
-    local now = os.clock()
-    if now - lastActivation < config.Cooldown then return end
-    lastActivation = now
-    config.refreshModSettings()
-
-    if keyName == config.Keybind then
+-- Keybind registration (config.txt only — keybinds are set-and-forget)
+RegisterKeyBind(bindKey, function()
+    ExecuteInGameThread(function()
+        if isTextInputFocused() then return end
+        local now = os.clock()
+        if now - lastActivation < config.Cooldown then return end
+        lastActivation = now
+        config.refreshModSettings()
         doQuickStack()
-    elseif keyName == config.KeybindOpen then
+    end)
+end)
+
+local bindKeyOpen = keyMap[config.KeybindOpen]
+if not bindKeyOpen then
+    print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
+    bindKeyOpen = Key.G
+end
+
+RegisterKeyBind(bindKeyOpen, function()
+    ExecuteInGameThread(function()
+        if isTextInputFocused() then return end
+        local now = os.clock()
+        if now - lastActivation < config.Cooldown then return end
+        lastActivation = now
+        config.refreshModSettings()
         doQuickStackOpen()
-    elseif keyName == config.KeybindOverflow then
+    end)
+end)
+
+local bindKeyOverflow = keyMap[config.KeybindOverflow]
+if not bindKeyOverflow then
+    print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
+    bindKeyOverflow = Key.H
+end
+
+RegisterKeyBind(bindKeyOverflow, function()
+    ExecuteInGameThread(function()
+        if isTextInputFocused() then return end
+        local now = os.clock()
+        if now - lastActivation < config.Cooldown then return end
+        lastActivation = now
+        config.refreshModSettings()
         doSortOverflow()
-    end
-end
-
--- Check if SN2ModSettings is installed for live keybind support
-local sn2ModSettingsInstalled = false
-do
-    local f = io.open("./ue4ss/Mods/SN2ModSettings/enabled.txt", "r")
-    if f then f:close(); sn2ModSettingsInstalled = true end
-end
-
-if sn2ModSettingsInstalled then
-    -- Dispatcher pattern: register ALL keys, check config on each press
-    -- Allows live keybind changes through SN2ModSettings UI
-    for keyName, keyConst in pairs(keyMap) do
-        local captured = keyName
-        RegisterKeyBind(keyConst, function()
-            ExecuteInGameThread(function()
-                handleKeyPress(captured)
-            end)
-        end)
-    end
-    print("[QuickStack] Keybinds: dispatcher mode (SN2ModSettings live rebinding)\n")
-else
-    -- Standard mode: register only configured keys
-    RegisterKeyBind(bindKey, function()
-        ExecuteInGameThread(function()
-            handleKeyPress(config.Keybind)
-        end)
     end)
-
-    local bindKeyOpen = keyMap[config.KeybindOpen]
-    if not bindKeyOpen then
-        print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
-        bindKeyOpen = Key.G
-    end
-    RegisterKeyBind(bindKeyOpen, function()
-        ExecuteInGameThread(function()
-            handleKeyPress(config.KeybindOpen)
-        end)
-    end)
-
-    local bindKeyOverflow = keyMap[config.KeybindOverflow]
-    if not bindKeyOverflow then
-        print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
-        bindKeyOverflow = Key.H
-    end
-    RegisterKeyBind(bindKeyOverflow, function()
-        ExecuteInGameThread(function()
-            handleKeyPress(config.KeybindOverflow)
-        end)
-    end)
-    print("[QuickStack] Keybinds: standard mode (config.txt)\n")
-end
+end)
