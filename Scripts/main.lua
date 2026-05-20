@@ -14,8 +14,62 @@ local ui = require("ui")
 categories.init(config)
 ui.init(config)
 
-local VERSION = "3.2.0"
+local VERSION = "3.3.0"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
+
+-- Write SN2ModSettings manifest if the mod is installed (optional integration)
+do
+    local regDir = "./ue4ss/Mods/SN2ModSettings/registrations/"
+    local probe = io.open(regDir .. ".probe", "w")
+    if probe then
+        probe:close()
+        os.remove(regDir .. ".probe")
+        -- SN2ModSettings is installed — write/update our manifest
+        local manifest = string.format([=[return {
+    name     = "QuickStack",
+    display  = "Quick Stack",
+    version  = "%s",
+    github   = "ryanhartwig/QuickStack",
+    nexus_id = "128",
+    settings = {
+        { key="radius", title="Scan Radius (meters)",
+          description="How far to search for containers when quick-stacking. Game limit is ~235m.",
+          type="slider", default=25, min=5, max=200, step=5, format="integer" },
+
+        { key="battery_swap", title="Battery Swap",
+          description="Auto-swap drained batteries with higher-charged ones from nearby chargers.",
+          type="toggle", default=true },
+
+        { key="restock_food_count", title="Food Budget",
+          description="How many food items to restock after quick-stacking. Set to 0 to disable.",
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+
+        { key="restock_drink_count", title="Drink Budget",
+          description="How many drink items to restock after quick-stacking. Set to 0 to disable.",
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+
+        { key="restock_heal_count", title="Heal Budget",
+          description="How many healing items to restock after quick-stacking. Set to 0 to disable.",
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+
+        { key="summary_panel", title="Summary Panel",
+          description="Show the visual transfer summary panel with item icons after quick-stacking.",
+          type="toggle", default=true },
+        { key="summary_duration", title="Summary Duration (seconds)",
+          description="How long the summary panel stays on screen.",
+          type="slider", default=6, min=2, max=15, step=1, format="integer",
+          enabled_by="summary_panel" },
+    },
+}
+]=], VERSION)
+        local f = io.open(regDir .. "QuickStack.lua", "w")
+        if f then
+            f:write(manifest)
+            f:close()
+            print("[QuickStack] SN2ModSettings manifest written\n")
+        end
+    end
+end
 
 -- Map config keybind string to UE4SS Key constant
 local keyMap = {
@@ -529,7 +583,7 @@ local function doQuickStack()
 
     -- Scan ALL nearby lockers (including %o and %x) for restock candidates
     local restockCandidates = {}
-    local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+    local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
     if restockEnabled then
         -- Combine all locker inventories: normal + overflow + excluded
         local allLockerInvs = {}
@@ -569,7 +623,7 @@ local function doQuickStack()
 
     --- Restock pass: pull consumables from nearby lockers to fill budgets
     local function doRestockPass(restockDetails)
-        local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+        local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
         if not restockEnabled or #restockCandidates == 0 then return restockDetails end
 
         -- Count player's current consumables
@@ -588,9 +642,9 @@ local function doQuickStack()
 
         -- Determine shortfalls
         local budgets = {
-            food  = config.RestockFood  and (config.RestockFoodCount  - currentCounts.food)  or 0,
-            drink = config.RestockDrink and (config.RestockDrinkCount - currentCounts.drink) or 0,
-            heal  = config.RestockHeal  and (config.RestockHealCount  - currentCounts.heal)  or 0,
+            food  = math.max(0, (config.RestockFoodCount or 0)  - currentCounts.food),
+            drink = math.max(0, (config.RestockDrinkCount or 0) - currentCounts.drink),
+            heal  = math.max(0, (config.RestockHealCount or 0)  - currentCounts.heal),
         }
 
         local anyShortfall = false
@@ -669,7 +723,7 @@ local function doQuickStack()
     end
 
     -- Nothing to do?
-    local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+    local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
     if #transferableItems == 0 and swapCount == 0 and not restockEnabled then
         utils.Notify("Nothing to stack", config)
         return
@@ -1078,6 +1132,7 @@ RegisterKeyBind(bindKey, function()
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
+        config.refreshModSettings()
         doQuickStack()
     end)
 end)
@@ -1095,6 +1150,7 @@ RegisterKeyBind(bindKeyOpen, function()
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
+        config.refreshModSettings()
         doQuickStackOpen()
     end)
 end)
@@ -1112,6 +1168,7 @@ RegisterKeyBind(bindKeyOverflow, function()
         local now = os.clock()
         if now - lastActivation < config.Cooldown then return end
         lastActivation = now
+        config.refreshModSettings()
         doSortOverflow()
     end)
 end)

@@ -1,5 +1,5 @@
 # ── Controls ──
-keybind=N
+keybind=M
 keybind_open=G
 keybind_overflow=H
 cooldown=1.0
@@ -42,11 +42,9 @@ label_max_chars=50
 
 # After quick-stacking, automatically restock consumables from nearby lockers
 # Pulls best-quality items first (e.g. isotonic water before regular water)
-restock_food=true
-restock_food_count=2
-restock_drink=true
+# Set to 0 to disable a category
+restock_food_count=0
 restock_drink_count=2
-restock_heal=true
 restock_heal_count=2
 
 # ── Battery Swap ──

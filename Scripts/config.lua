@@ -16,11 +16,8 @@ config.OverflowPrefix = "%o"
 config.LabelRouting = true
 config.KeybindOverflow = "H"
 config.BatterySwap = true
-config.RestockFood = true
 config.RestockFoodCount = 2
-config.RestockDrink = true
 config.RestockDrinkCount = 2
-config.RestockHeal = true
 config.RestockHealCount = 2
 config.LabelMaxChars = 50
 config.SummaryPanel = true
@@ -87,16 +84,10 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
-                elseif key == "restock_food" then
-                    config.RestockFood = (value == "true")
                 elseif key == "restock_food_count" then
                     config.RestockFoodCount = tonumber(value) or 2
-                elseif key == "restock_drink" then
-                    config.RestockDrink = (value == "true")
                 elseif key == "restock_drink_count" then
                     config.RestockDrinkCount = tonumber(value) or 2
-                elseif key == "restock_heal" then
-                    config.RestockHeal = (value == "true")
                 elseif key == "restock_heal_count" then
                     config.RestockHealCount = tonumber(value) or 2
                 elseif key == "label_max_chars" then
@@ -120,5 +111,34 @@ local function loadConfig()
 end
 
 loadConfig()
+
+-- Override with SN2ModSettings values if available (optional dependency)
+local settingsMap = {
+    { key = "radius",              field = "Radius",            type = "number" },
+    { key = "battery_swap",        field = "BatterySwap",       type = "boolean" },
+    { key = "restock_food_count",  field = "RestockFoodCount",  type = "number" },
+    { key = "restock_drink_count", field = "RestockDrinkCount", type = "number" },
+    { key = "restock_heal_count",  field = "RestockHealCount",  type = "number" },
+    { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
+    { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
+}
+
+function config.refreshModSettings()
+    if not ModRef then return end
+    for _, entry in ipairs(settingsMap) do
+        local ok, val = pcall(function()
+            return ModRef:GetSharedVariable("SN2ModSettings/QuickStack/" .. entry.key)
+        end)
+        if ok and val ~= nil and type(val) == entry.type then
+            -- SN2ModSettings sliders return floats — round to int for integer settings
+            if entry.type == "number" then
+                val = math.floor(val + 0.5)
+            end
+            config[entry.field] = val
+        end
+    end
+end
+
+config.refreshModSettings()
 
 return config
