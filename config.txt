@@ -38,6 +38,17 @@ overflow_prefix=%o
 # Increase to allow longer comma-separated labels
 label_max_chars=50
 
+# ── Consumable Restock ──
+
+# After quick-stacking, automatically restock consumables from nearby lockers
+# Pulls best-quality items first (e.g. isotonic water before regular water)
+restock_food=true
+restock_food_count=2
+restock_drink=true
+restock_drink_count=2
+restock_heal=true
+restock_heal_count=2
+
 # ── Battery Swap ──
 
 # Auto-swap batteries/power cells with higher-charged ones from nearby chargers

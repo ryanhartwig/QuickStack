@@ -263,19 +263,26 @@ local function doBatterySwap(pawn, playerInv)
     local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
-    -- Find all chargers (UWEPowerTerminal covers both battery and power cell terminals)
+    -- Find chargers — whitelist known charger classes to avoid stripping vehicles (Tadpole etc.)
+    local CHARGER_CLASSES = {
+        BP_BasicBatteryTerminal_C = true,
+        BP_PowerCellTerminal_C = true,
+    }
     local chargers = FindAllOf("UWEPowerTerminal")
     if not chargers then return 0 end
 
-    -- Collect nearby charger inventories
+    -- Collect nearby charger inventories (only whitelisted terminal classes)
     local chargerInvs = {}
     for _, charger in ipairs(chargers) do
         if charger:IsValid() then
-            local dist = utils.GetDistance(pawn, charger)
-            if dist <= radiusUnits then
-                local ok, inv = pcall(function() return charger.InventoryComponent end)
-                if ok and inv and inv:IsValid() then
-                    table.insert(chargerInvs, inv)
+            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
+            if okCls and CHARGER_CLASSES[className] then
+                local dist = utils.GetDistance(pawn, charger)
+                if dist <= radiusUnits then
+                    local ok, inv = pcall(function() return charger.InventoryComponent end)
+                    if ok and inv and inv:IsValid() then
+                        table.insert(chargerInvs, inv)
+                    end
                 end
             end
         end
@@ -445,6 +452,7 @@ local function doQuickStack()
     local radiusUnits = utils.MetersToUnits(config.Radius)
     local nearbyLockers = {}
     local overflowLockers = {}
+    local excludedLockerInvs = {}  -- for restock: %x lockers still have food/water
 
     for _, source in ipairs(containerSources) do
         local actors = FindAllOf(source.class)
@@ -462,9 +470,10 @@ local function doQuickStack()
                                 if ok2 then rawLabel = lbl end
                             end
 
-                            -- Check exclusion prefix — skip this container entirely
+                            -- Check exclusion prefix — skip this container for stacking
                             if rawLabel and config.ExcludePrefix ~= "" then
                                 if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
+                                    table.insert(excludedLockerInvs, inv)
                                     goto nextActor
                                 end
                             end
@@ -518,17 +527,126 @@ local function doQuickStack()
             playerInv, transferableItems, totalItemsBefore, nearbyLockers)
     end
 
+    -- Scan ALL nearby lockers (including %o and %x) for restock candidates
+    local restockCandidates = {}
+    local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+    if restockEnabled then
+        -- Combine all locker inventories: normal + overflow + excluded
+        local allLockerInvs = {}
+        for _, data in ipairs(nearbyLockers) do table.insert(allLockerInvs, data.inventory) end
+        for _, data in ipairs(overflowLockers) do table.insert(allLockerInvs, data.inventory) end
+        for _, inv in ipairs(excludedLockerInvs) do table.insert(allLockerInvs, inv) end
+
+        for _, inv in ipairs(allLockerInvs) do
+            local ok, items = pcall(function() return inv:GetItems() end)
+            if ok and items then
+                for _, item in ipairs(items) do
+                    local s = item:get()
+                    if s.ItemType then
+                        local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                        if ok2 then
+                            local category = categories.getConsumableCategory(typeName)
+                            if category then
+                                local displayName = nil
+                                pcall(function() displayName = s.ItemType.Name:ToString() end)
+                                table.insert(restockCandidates, {
+                                    itemId = s.ItemId,
+                                    inventoryId = s.InventoryId,
+                                    typeName = typeName,
+                                    displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
+                                    itemType = s.ItemType,
+                                    category = category,
+                                    priority = categories.getPriority(typeName, category),
+                                    lockerInv = inv,
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    --- Restock pass: pull consumables from nearby lockers to fill budgets
+    local function doRestockPass(restockDetails)
+        local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+        if not restockEnabled or #restockCandidates == 0 then return restockDetails end
+
+        -- Count player's current consumables
+        local currentCounts = { food = 0, drink = 0, heal = 0 }
+        local playerItems = playerInv:GetItems()
+        for _, item in ipairs(playerItems) do
+            local s = item:get()
+            if s.ItemType then
+                local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                if ok then
+                    local cat = categories.getConsumableCategory(typeName)
+                    if cat then currentCounts[cat] = currentCounts[cat] + 1 end
+                end
+            end
+        end
+
+        -- Determine shortfalls
+        local budgets = {
+            food  = config.RestockFood  and (config.RestockFoodCount  - currentCounts.food)  or 0,
+            drink = config.RestockDrink and (config.RestockDrinkCount - currentCounts.drink) or 0,
+            heal  = config.RestockHeal  and (config.RestockHealCount  - currentCounts.heal)  or 0,
+        }
+
+        local anyShortfall = false
+        for _, v in pairs(budgets) do
+            if v > 0 then anyShortfall = true; break end
+        end
+        if not anyShortfall then return restockDetails end
+
+        -- Sort candidates by priority (best first)
+        table.sort(restockCandidates, function(a, b) return a.priority < b.priority end)
+
+        -- Pull best candidates to fill shortfalls
+        local playerInvId = playerInv.InventoryId
+        for _, candidate in ipairs(restockCandidates) do
+            local cat = candidate.category
+            if budgets[cat] and budgets[cat] > 0 then
+                local ok = pcall(function()
+                    playerInv:MoveItemBetweenInventories(
+                        candidate.itemId, candidate.inventoryId, playerInvId)
+                end)
+                if ok then
+                    budgets[cat] = budgets[cat] - 1
+                    -- Record in restock details
+                    if not restockDetails[candidate.typeName] then
+                        restockDetails[candidate.typeName] = {
+                            itemType = candidate.itemType,
+                            displayName = candidate.displayName,
+                            count = 0,
+                            containers = {},
+                        }
+                    end
+                    restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
+                    -- Use locker label or "Locker" as source
+                    local sourceName = "Locker"
+                    restockDetails[candidate.typeName].containers[sourceName] = true
+                end
+            end
+        end
+
+        return restockDetails
+    end
+
     -- Function to show results (called after all passes complete)
-    local function showResults(totalTransferred, totalContainers, overflowDetails)
-        if totalTransferred == 0 and swapCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
+    local function showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
+        local restockCount = 0
+        for _ in pairs(restockDetails or {}) do restockCount = restockCount + 1 end
+
+        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
             utils.Notify("No matching containers nearby", config)
-        elseif totalTransferred == 0 and swapCount == 0 then
+        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 then
             utils.Notify("Nothing to stack", config)
         else
-            local itm = totalTransferred == 1 and "item" or "items"
-            local ctr = totalContainers == 1 and "container" or "containers"
             local parts = {}
             if totalTransferred > 0 then
+                local itm = totalTransferred == 1 and "item" or "items"
+                local ctr = totalContainers == 1 and "container" or "containers"
                 if someFull then
                     table.insert(parts, string.format("Quick Stacked %d %s to %d %s (some full)", totalTransferred, itm, totalContainers, ctr))
                 else
@@ -539,30 +657,56 @@ local function doQuickStack()
                 local bat = swapCount == 1 and "battery" or "batteries"
                 table.insert(parts, string.format("Swapped %d %s", swapCount, bat))
             end
+            if restockCount > 0 then
+                local ritm = restockCount == 1 and "type" or "types"
+                table.insert(parts, string.format("Restocked %d %s", restockCount, ritm))
+            end
             if #parts > 0 then
                 utils.Notify(table.concat(parts, " | "), config)
             end
-            showTransferSummary(transferDetails, overflowDetails)
+            showTransferSummary(transferDetails, overflowDetails, restockDetails)
         end
     end
 
     -- Nothing to do?
-    if #transferableItems == 0 and swapCount == 0 then
+    local restockEnabled = config.RestockFood or config.RestockDrink or config.RestockHeal
+    if #transferableItems == 0 and swapCount == 0 and not restockEnabled then
         utils.Notify("Nothing to stack", config)
         return
+    end
+
+    -- If nothing to stash/swap but restock is enabled, skip straight to restock
+    if #transferableItems == 0 and swapCount == 0 and restockEnabled then
+        local restockDetails = doRestockPass({})
+        local restockCount = 0
+        for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
+        if restockCount > 0 then
+            local ritm = restockCount == 1 and "type" or "types"
+            utils.Notify(string.format("Restocked %d %s", restockCount, ritm), config)
+            showTransferSummary({}, {}, restockDetails)
+        else
+            utils.Notify("Nothing to stack", config)
+        end
+        return
+    end
+
+    -- Finalize: run restock pass then show results
+    local function finalize(totalTransferred, totalContainers, overflowDetails)
+        local restockDetails = doRestockPass({})
+        showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
     end
 
     -- Pass 2: Overflow dump (only if overflow lockers exist and items remain)
     local function doOverflowPass(pass1Transferred, pass1Containers)
         if #overflowLockers == 0 then
-            showResults(pass1Transferred, pass1Containers)
+            finalize(pass1Transferred, pass1Containers, {})
             return
         end
 
         -- Re-read player inventory after pass 1
         local remainingItems, remainingCount = getTransferableItems(playerInv)
         if #remainingItems == 0 then
-            showResults(pass1Transferred, pass1Containers)
+            finalize(pass1Transferred, pass1Containers, {})
             return
         end
 
@@ -590,7 +734,6 @@ local function doQuickStack()
                     if ok then
                         overflowContainersUsed[i] = true
                         overflowItemCount[i] = overflowItemCount[i] + 1
-                        -- Record in overflow details (separate from normal transfers)
                         if not overflowDetails[item.typeName] then
                             overflowDetails[item.typeName] = {
                                 itemType = item.itemType,
@@ -607,13 +750,12 @@ local function doQuickStack()
             end
         end
 
-        -- Count overflow results
         local overflowContainerCount = 0
         for _ in pairs(overflowContainersUsed) do overflowContainerCount = overflowContainerCount + 1 end
 
-        -- Wait for overflow replication, then show combined results
+        -- Wait for overflow replication, then restock + show
         waitForReplication(playerInv, remainingCount, function(overflowTransferred)
-            showResults(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount, overflowDetails)
+            finalize(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount, overflowDetails)
         end)
     end
 

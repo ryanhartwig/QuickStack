@@ -16,6 +16,12 @@ config.OverflowPrefix = "%o"
 config.LabelRouting = true
 config.KeybindOverflow = "H"
 config.BatterySwap = true
+config.RestockFood = true
+config.RestockFoodCount = 2
+config.RestockDrink = true
+config.RestockDrinkCount = 2
+config.RestockHeal = true
+config.RestockHealCount = 2
 config.LabelMaxChars = 50
 config.SummaryPanel = true
 config.SummaryShowDestination = true
@@ -81,6 +87,18 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
+                elseif key == "restock_food" then
+                    config.RestockFood = (value == "true")
+                elseif key == "restock_food_count" then
+                    config.RestockFoodCount = tonumber(value) or 2
+                elseif key == "restock_drink" then
+                    config.RestockDrink = (value == "true")
+                elseif key == "restock_drink_count" then
+                    config.RestockDrinkCount = tonumber(value) or 2
+                elseif key == "restock_heal" then
+                    config.RestockHeal = (value == "true")
+                elseif key == "restock_heal_count" then
+                    config.RestockHealCount = tonumber(value) or 2
                 elseif key == "label_max_chars" then
                     config.LabelMaxChars = tonumber(value) or 50
                 elseif key == "summary_panel" then
