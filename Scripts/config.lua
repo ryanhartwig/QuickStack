@@ -121,6 +121,9 @@ local settingsMap = {
     { key = "restock_heal_count",  field = "RestockHealCount",  type = "number" },
     { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
+    { key = "keybind",             field = "Keybind",           type = "string" },
+    { key = "keybind_open",        field = "KeybindOpen",       type = "string" },
+    { key = "keybind_overflow",    field = "KeybindOverflow",   type = "string" },
 }
 
 function config.refreshModSettings()

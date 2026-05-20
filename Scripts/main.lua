@@ -19,13 +19,9 @@ print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
 do
-    local regDir = "./ue4ss/Mods/SN2ModSettings/registrations/"
-    local probe = io.open(regDir .. ".probe", "w")
-    if probe then
-        probe:close()
-        os.remove(regDir .. ".probe")
-        -- SN2ModSettings is installed — write/update our manifest
-        local manifest = string.format([=[return {
+    local SN2_DIR = "./ue4ss/Mods/SN2ModSettings/"
+    local REG_DIR = SN2_DIR .. "registrations/"
+    local MANIFEST_CONTENT = string.format([=[return {
     name     = "QuickStack",
     display  = "Quick Stack",
     version  = "%s",
@@ -59,15 +55,61 @@ do
           description="How long the summary panel stays on screen.",
           type="slider", default=6, min=2, max=15, step=1, format="integer",
           enabled_by="summary_panel" },
+
+        { key="keybind", title="Quick Stack Key",
+          description="Key to quick-stack to nearby containers.",
+          type="keybind", default="N" },
+        { key="keybind_open", title="Open Container Key",
+          description="Key to quick-stack into the currently open container.",
+          type="keybind", default="G" },
+        { key="keybind_overflow", title="Sort Overflow Key",
+          description="Key to sort overflow locker contents into nearby matching lockers.",
+          type="keybind", default="H" },
     },
 }
 ]=], VERSION)
-        local f = io.open(regDir .. "QuickStack.lua", "w")
-        if f then
-            f:write(manifest)
-            f:close()
-            print("[QuickStack] SN2ModSettings manifest written\n")
+
+    -- Check if SN2ModSettings is installed
+    local enabledFile = io.open(SN2_DIR .. "enabled.txt", "r")
+    if enabledFile then
+        enabledFile:close()
+
+        -- Poll for SN2ModSettings initialization (writes its own manifest on startup)
+        local attempts = 0
+        local MAX_ATTEMPTS = 10
+        local function tryWriteManifest()
+            attempts = attempts + 1
+
+            -- Check if SN2ModSettings has initialized (its self-manifest exists)
+            local selfManifest = io.open(REG_DIR .. "SN2ModSettings.lua", "r")
+            local initialized = selfManifest ~= nil
+            if selfManifest then selfManifest:close() end
+
+            if initialized or attempts >= MAX_ATTEMPTS then
+                -- Create registrations dir if needed (fixes systems where ensure_dir fails)
+                if not initialized then
+                    os.execute('mkdir "' .. REG_DIR:gsub("/", "\\") .. '" 2>nul')
+                end
+                -- Write our manifest
+                local f = io.open(REG_DIR .. "QuickStack.lua", "w")
+                if f then
+                    f:write(MANIFEST_CONTENT)
+                    f:close()
+                    print(string.format("[QuickStack] SN2ModSettings manifest written (attempt %d/%d)\n",
+                        attempts, MAX_ATTEMPTS))
+                end
+            else
+                -- Retry in 1 second
+                ExecuteWithDelay(1000, function()
+                    ExecuteInGameThread(tryWriteManifest)
+                end)
+            end
         end
+
+        -- Start polling after 1 second (give SN2ModSettings time to begin loading)
+        ExecuteWithDelay(1000, function()
+            ExecuteInGameThread(tryWriteManifest)
+        end)
     end
 end
 
@@ -1165,50 +1207,73 @@ if config.LabelMaxChars and config.LabelMaxChars > 0 then
     end)
 end
 
--- Keybind: N for Quick Stack (nearby containers + battery swap)
-RegisterKeyBind(bindKey, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
+-- Keybind registration
+-- Two modes: with SN2ModSettings (dispatcher pattern for live rebinding)
+--            without SN2ModSettings (register configured keys only)
+
+local function handleKeyPress(keyName)
+    if isTextInputFocused() then return end
+    local now = os.clock()
+    if now - lastActivation < config.Cooldown then return end
+    lastActivation = now
+    config.refreshModSettings()
+
+    if keyName == config.Keybind then
         doQuickStack()
-    end)
-end)
-
--- Keybind: G for Quick Stack into open container
-local bindKeyOpen = keyMap[config.KeybindOpen]
-if not bindKeyOpen then
-    print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
-    bindKeyOpen = Key.G
-end
-
-RegisterKeyBind(bindKeyOpen, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
+    elseif keyName == config.KeybindOpen then
         doQuickStackOpen()
-    end)
-end)
-
--- Keybind: H for Sort Overflow lockers
-local bindKeyOverflow = keyMap[config.KeybindOverflow]
-if not bindKeyOverflow then
-    print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
-    bindKeyOverflow = Key.H
+    elseif keyName == config.KeybindOverflow then
+        doSortOverflow()
+    end
 end
 
-RegisterKeyBind(bindKeyOverflow, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
-        doSortOverflow()
+-- Check if SN2ModSettings is installed for live keybind support
+local sn2ModSettingsInstalled = false
+do
+    local f = io.open("./ue4ss/Mods/SN2ModSettings/enabled.txt", "r")
+    if f then f:close(); sn2ModSettingsInstalled = true end
+end
+
+if sn2ModSettingsInstalled then
+    -- Dispatcher pattern: register ALL keys, check config on each press
+    -- Allows live keybind changes through SN2ModSettings UI
+    for keyName, keyConst in pairs(keyMap) do
+        local captured = keyName
+        RegisterKeyBind(keyConst, function()
+            ExecuteInGameThread(function()
+                handleKeyPress(captured)
+            end)
+        end)
+    end
+    print("[QuickStack] Keybinds: dispatcher mode (SN2ModSettings live rebinding)\n")
+else
+    -- Standard mode: register only configured keys
+    RegisterKeyBind(bindKey, function()
+        ExecuteInGameThread(function()
+            handleKeyPress(config.Keybind)
+        end)
     end)
-end)
+
+    local bindKeyOpen = keyMap[config.KeybindOpen]
+    if not bindKeyOpen then
+        print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
+        bindKeyOpen = Key.G
+    end
+    RegisterKeyBind(bindKeyOpen, function()
+        ExecuteInGameThread(function()
+            handleKeyPress(config.KeybindOpen)
+        end)
+    end)
+
+    local bindKeyOverflow = keyMap[config.KeybindOverflow]
+    if not bindKeyOverflow then
+        print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
+        bindKeyOverflow = Key.H
+    end
+    RegisterKeyBind(bindKeyOverflow, function()
+        ExecuteInGameThread(function()
+            handleKeyPress(config.KeybindOverflow)
+        end)
+    end)
+    print("[QuickStack] Keybinds: standard mode (config.txt)\n")
+end
