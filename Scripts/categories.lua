@@ -22,7 +22,7 @@ local FOOD_PATTERNS = {
     "halfmoon", "geordie", "houndgar", "sandspear", "quadrate",
     "spineytail", "pneumo", "bluemoon", "harvestmoon",
 }
-local DRINK_PATTERNS = { "water", "isotonic", "drink", "filtered" }
+local DRINK_PATTERNS = { "water_item", "isotonic", "drink", "filtergland" }
 local HEAL_PATTERNS = { "firstaid", "first_aid", "medkit", "med_kit" }
 
 -- Priority order (lower index = better). Based on actual in-game food/water/heal values.
@@ -61,8 +61,8 @@ categories.FOOD_PRIORITY = {
 }
 categories.DRINK_PRIORITY = {
     "isotonic",         -- +55 water
-    "filtered",         -- Filtered Water Packet
-    "water",            -- +40 water
+    "filtergland",      -- Filtered Water Packet (DA_WaterFilterGland_Consumable_ItemType)
+    "water_item",       -- +40 water (DA_Water_ItemType)
 }
 categories.HEAL_PRIORITY = {
     "enhanced",         -- +100 health (Enhanced First Aid Kit)

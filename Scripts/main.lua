@@ -14,7 +14,7 @@ local ui = require("ui")
 categories.init(config)
 ui.init(config)
 
-local VERSION = "3.3.1"
+local VERSION = "3.3.2"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
