@@ -10,54 +10,80 @@ local utils = require("utils")
 local matching = require("matching")
 local categories = require("categories")
 local ui = require("ui")
+local lang = require("lang")
+local L = lang.L
 
 categories.init(config)
 ui.init(config)
 
-local VERSION = "3.3.2"
+local VERSION = "3.3.3"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
 do
     local SN2_DIR = "./ue4ss/Mods/SN2ModSettings/"
     local REG_DIR = SN2_DIR .. "registrations/"
-    local MANIFEST_CONTENT = string.format([=[return {
+
+    local function buildManifest()
+        local function esc(s) return s:gsub("'", "\\'") end
+        return string.format([=[return {
     name     = "QuickStack",
-    display  = "Quick Stack",
+    display  = '%s',
     version  = "%s",
     github   = "ryanhartwig/QuickStack",
     nexus_id = "128",
     settings = {
-        { key="radius", title="Scan Radius (meters)",
-          description="How far to search for containers when quick-stacking. Game limit is ~235m.",
-          type="slider", default=25, min=5, max=200, step=5, format="integer" },
+        { key="radius", title='%s',
+          description='%s',
+          type="slider", default=25, min=5, max=235, step=5, format="integer" },
 
-        { key="battery_swap", title="Battery Swap",
-          description="Auto-swap drained batteries with higher-charged ones from nearby chargers.",
+        { key="battery_swap", title='%s',
+          description='%s',
           type="toggle", default=true },
 
-        { key="restock_food_count", title="Food Budget",
-          description="How many food items to restock after quick-stacking. Set to 0 to disable.",
+        { key="restock_food_count", title='%s',
+          description='%s',
           type="slider", default=2, min=0, max=10, step=1, format="integer" },
 
-        { key="restock_drink_count", title="Drink Budget",
-          description="How many drink items to restock after quick-stacking. Set to 0 to disable.",
+        { key="restock_drink_count", title='%s',
+          description='%s',
           type="slider", default=2, min=0, max=10, step=1, format="integer" },
 
-        { key="restock_heal_count", title="Heal Budget",
-          description="How many healing items to restock after quick-stacking. Set to 0 to disable.",
+        { key="restock_heal_count", title='%s',
+          description='%s',
           type="slider", default=2, min=0, max=10, step=1, format="integer" },
 
-        { key="summary_panel", title="Summary Panel",
-          description="Show the visual transfer summary panel with item icons after quick-stacking.",
+        { key="summary_panel", title='%s',
+          description='%s',
           type="toggle", default=true },
-        { key="summary_duration", title="Summary Duration (seconds)",
-          description="How long the summary panel stays on screen.",
+        { key="summary_duration", title='%s',
+          description='%s',
           type="slider", default=6, min=2, max=15, step=1, format="integer",
           enabled_by="summary_panel" },
     },
 }
-]=], VERSION)
+]=],
+        esc(L("mod_display")), VERSION,
+        esc(L("radius_title")), esc(L("radius_desc")),
+        esc(L("battery_swap_title")), esc(L("battery_swap_desc")),
+        esc(L("food_title")), esc(L("food_desc")),
+        esc(L("drink_title")), esc(L("drink_desc")),
+        esc(L("heal_title")), esc(L("heal_desc")),
+        esc(L("summary_title")), esc(L("summary_desc")),
+        esc(L("summary_dur_title")), esc(L("summary_dur_desc"))
+        )
+    end
+
+    local function writeManifest()
+        local f = io.open(REG_DIR .. "QuickStack.lua", "w")
+        if f then
+            f:write(buildManifest())
+            f:close()
+        end
+    end
+
+    -- Re-write manifest when language changes
+    lang.onRefresh = writeManifest
 
     -- Check if SN2ModSettings is installed
     local enabledFile = io.open(SN2_DIR .. "enabled.txt", "r")
@@ -80,14 +106,9 @@ do
                 if not initialized then
                     os.execute('mkdir "' .. REG_DIR:gsub("/", "\\") .. '" 2>nul')
                 end
-                -- Write our manifest
-                local f = io.open(REG_DIR .. "QuickStack.lua", "w")
-                if f then
-                    f:write(MANIFEST_CONTENT)
-                    f:close()
-                    print(string.format("[QuickStack] SN2ModSettings manifest written (attempt %d/%d)\n",
-                        attempts, MAX_ATTEMPTS))
-                end
+                writeManifest()
+                print(string.format("[QuickStack] SN2ModSettings manifest written (attempt %d/%d)\n",
+                    attempts, MAX_ATTEMPTS))
             else
                 -- Retry in 1 second
                 ExecuteWithDelay(1000, function()
@@ -527,21 +548,18 @@ local function showResultNotification(actualTransferred, numContainers, someFull
     local function buildMessage(transferred, containers, full, swaps)
         local parts = {}
         if transferred > 0 then
-            local itm = transferred == 1 and "item" or "items"
-            local ctr = containers == 1 and "container" or "containers"
             if full then
-                table.insert(parts, string.format("Quick Stacked %d %s to %d %s (some full)", transferred, itm, containers, ctr))
+                table.insert(parts, L("stacked_full", transferred, containers))
             else
-                table.insert(parts, string.format("Quick Stacked %d %s to %d %s", transferred, itm, containers, ctr))
+                table.insert(parts, L("stacked", transferred, containers))
             end
         end
         if swaps > 0 then
-            local bat = swaps == 1 and "battery" or "batteries"
-            table.insert(parts, string.format("Swapped %d %s", swaps, bat))
+            table.insert(parts, L("swapped", swaps))
         end
         if #parts == 0 then
-            if full then return "No matching containers nearby (some full)" end
-            return "No matching containers nearby"
+            if full then return L("no_match_full") end
+            return L("no_match")
         end
         return table.concat(parts, " | ")
     end
@@ -562,7 +580,7 @@ local function doQuickStack()
 
     local playerInv = pawn.InventoryComponent
     if not playerInv or not playerInv:IsValid() then
-        utils.Notify("Error: Could not find player inventory", config)
+        utils.Notify(L("no_inventory"), config)
         return
     end
 
@@ -642,6 +660,9 @@ local function doQuickStack()
             end
         end
     end
+
+    -- Sort overflow lockers by label for stable, predictable ordering
+    table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
 
     -- Do battery swap (runs regardless of whether there are lockers)
     local swapCount = doBatterySwap(pawn, playerInv)
@@ -766,7 +787,13 @@ local function doQuickStack()
         end
 
         -- Phase 2: Upgrade — swap player's worst for locker's best if better
+        local configBudgets = {
+            food  = config.RestockFoodCount or 0,
+            drink = config.RestockDrinkCount or 0,
+            heal  = config.RestockHealCount or 0,
+        }
         for _, cat in ipairs({"food", "drink", "heal"}) do
+            if configBudgets[cat] == 0 then goto nextCat end  -- budget=0 means don't manage this category
             local held = heldByCategory[cat]
             if #held == 0 then goto nextCat end
 
@@ -818,27 +845,23 @@ local function doQuickStack()
         for _ in pairs(restockDetails or {}) do restockCount = restockCount + 1 end
 
         if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
-            utils.Notify("No matching containers nearby", config)
+            utils.Notify(L("no_match"), config)
         elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 then
-            utils.Notify("Nothing to stack", config)
+            utils.Notify(L("nothing_to_stack"), config)
         else
             local parts = {}
             if totalTransferred > 0 then
-                local itm = totalTransferred == 1 and "item" or "items"
-                local ctr = totalContainers == 1 and "container" or "containers"
                 if someFull then
-                    table.insert(parts, string.format("Quick Stacked %d %s to %d %s (some full)", totalTransferred, itm, totalContainers, ctr))
+                    table.insert(parts, L("stacked_full", totalTransferred, totalContainers))
                 else
-                    table.insert(parts, string.format("Quick Stacked %d %s to %d %s", totalTransferred, itm, totalContainers, ctr))
+                    table.insert(parts, L("stacked", totalTransferred, totalContainers))
                 end
             end
             if swapCount > 0 then
-                local bat = swapCount == 1 and "battery" or "batteries"
-                table.insert(parts, string.format("Swapped %d %s", swapCount, bat))
+                table.insert(parts, L("swapped", swapCount))
             end
             if restockCount > 0 then
-                local ritm = restockCount == 1 and "type" or "types"
-                table.insert(parts, string.format("Restocked %d %s", restockCount, ritm))
+                table.insert(parts, L("restocked", restockCount))
             end
             if #parts > 0 then
                 utils.Notify(table.concat(parts, " | "), config)
@@ -850,7 +873,7 @@ local function doQuickStack()
     -- Nothing to do?
     local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
     if #transferableItems == 0 and swapCount == 0 and not restockEnabled then
-        utils.Notify("Nothing to stack", config)
+        utils.Notify(L("nothing_to_stack"), config)
         return
     end
 
@@ -860,11 +883,10 @@ local function doQuickStack()
         local restockCount = 0
         for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
         if restockCount > 0 then
-            local ritm = restockCount == 1 and "type" or "types"
-            utils.Notify(string.format("Restocked %d %s", restockCount, ritm), config)
+            utils.Notify(L("restocked", restockCount), config)
             showTransferSummary({}, {}, restockDetails)
         else
-            utils.Notify("Nothing to stack", config)
+            utils.Notify(L("nothing_to_stack"), config)
         end
         return
     end
@@ -952,7 +974,7 @@ end
 local function doQuickStackOpen()
     local containerInv = getOpenContainerInventory()
     if not containerInv then
-        utils.Notify("No container open", config)
+        utils.Notify(L("no_container_open"), config)
         return
     end
 
@@ -964,7 +986,7 @@ local function doQuickStackOpen()
 
     local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
     if #transferableItems == 0 then
-        utils.Notify("Nothing to stack", config)
+        utils.Notify(L("nothing_to_stack"), config)
         return
     end
 
@@ -994,7 +1016,7 @@ local function doQuickStackOpen()
     if actualTransferred <= 0 then
         waitForReplication(playerInv, totalItemsBefore, function(confirmedCount)
             if confirmedCount <= 0 then
-                utils.Notify("No matching items for this container", config)
+                utils.Notify(L("no_match_container"), config)
             end
         end)
     end
@@ -1079,13 +1101,16 @@ local function doSortOverflow()
         end
     end
 
+    -- Sort overflow lockers by label for stable processing order
+    table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
+
     if #overflowLockers == 0 then
-        utils.Notify("No overflow lockers nearby", config)
+        utils.Notify(L("no_overflow"), config)
         return
     end
 
     if #targetLockers == 0 then
-        utils.Notify("No target lockers nearby", config)
+        utils.Notify(L("no_target"), config)
         return
     end
 
@@ -1201,7 +1226,7 @@ local function doSortOverflow()
     end
 
     if totalMoved == 0 then
-        utils.Notify("No items could be sorted from overflow", config)
+        utils.Notify(L("no_overflow_sorted"), config)
         return
     end
 
@@ -1214,10 +1239,12 @@ local function doSortOverflow()
     pcall(function() firstOverflowCount = #firstOverflow.inventory:GetItems() end)
 
     -- Show results (wait for replication if needed)
-    local itm = totalMoved == 1 and "item" or "items"
-    local ctr = numContainers == 1 and "container" or "containers"
-    local msg = string.format("Sorted %d %s from overflow to %d %s", totalMoved, itm, numContainers, ctr)
-    if someFull then msg = msg .. " (some full)" end
+    local msg
+    if someFull then
+        msg = L("sorted_full", totalMoved, numContainers)
+    else
+        msg = L("sorted", totalMoved, numContainers)
+    end
 
     utils.Notify(msg, config)
     showTransferSummary(transferDetails)
