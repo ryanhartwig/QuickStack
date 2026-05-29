@@ -2,6 +2,9 @@
 keybind=N
 keybind_open=G
 keybind_overflow=H
+# Restock-only keybind (blank = disabled, restock runs with quickstack key)
+# If set to a different key than keybind, restock is separated from quickstack
+keybind_restock=
 cooldown=1.0
 radius=25
 

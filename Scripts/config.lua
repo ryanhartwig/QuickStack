@@ -15,6 +15,7 @@ config.ExcludePrefix = "%x"
 config.OverflowPrefix = "%o"
 config.LabelRouting = true
 config.KeybindOverflow = "H"
+config.KeybindRestock = ""
 config.BatterySwap = true
 config.RestockFoodCount = 2
 config.RestockDrinkCount = 2
@@ -80,6 +81,8 @@ local function loadConfig()
                     config.OverflowPrefix = value
                 elseif key == "keybind_overflow" then
                     config.KeybindOverflow = value:upper()
+                elseif key == "keybind_restock" then
+                    config.KeybindRestock = value ~= "" and value:upper() or ""
                 elseif key == "label_routing" then
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then

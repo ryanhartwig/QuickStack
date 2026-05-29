@@ -142,6 +142,9 @@ if not bindKey then
     bindKey = Key.N
 end
 
+-- Restock runs with quickstack unless a separate restock keybind is configured
+local restockWithQuickstack = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
+
 -- Cooldown state
 local lastActivation = 0
 
@@ -676,7 +679,8 @@ local function doQuickStack()
 
     -- Scan ALL nearby lockers (including %o and %x) for restock candidates
     local restockCandidates = {}
-    local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
+    local restockEnabled = restockWithQuickstack and
+        ((config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0)
     if restockEnabled then
         -- Combine all locker inventories: normal + overflow + excluded
         local allLockerInvs = {}
@@ -871,7 +875,6 @@ local function doQuickStack()
     end
 
     -- Nothing to do?
-    local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
     if #transferableItems == 0 and swapCount == 0 and not restockEnabled then
         utils.Notify(L("nothing_to_stack"), config)
         return
@@ -1250,6 +1253,210 @@ local function doSortOverflow()
     showTransferSummary(transferDetails)
 end
 
+--- Standalone restock: scan nearby lockers and restock consumables only
+local function doRestockOnly()
+    local pawn = utils.GetPlayerPawn()
+    if not pawn then return end
+
+    local playerInv = pawn.InventoryComponent
+    if not playerInv or not playerInv:IsValid() then
+        utils.Notify(L("no_inventory"), config)
+        return
+    end
+
+    local restockEnabled = (config.RestockFoodCount or 0) > 0 or (config.RestockDrinkCount or 0) > 0 or (config.RestockHealCount or 0) > 0
+    if not restockEnabled then
+        utils.Notify(L("nothing_to_restock"), config)
+        return
+    end
+
+    -- Scan nearby containers for restock candidates
+    local containerSources = {
+        { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
+        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
+    }
+
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+    local allLockerInvs = {}
+
+    for _, source in ipairs(containerSources) do
+        local actors = FindAllOf(source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor:IsValid() then
+                    local dist = utils.GetDistance(pawn, actor)
+                    if dist <= radiusUnits then
+                        local ok, inv = pcall(function() return source.getInv(actor) end)
+                        if ok and inv and inv:IsValid() then
+                            table.insert(allLockerInvs, inv)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if #allLockerInvs == 0 then
+        utils.Notify(L("no_match"), config)
+        return
+    end
+
+    -- Build restock candidates from all nearby lockers
+    local restockCandidates = {}
+    for _, inv in ipairs(allLockerInvs) do
+        local ok, items = pcall(function() return inv:GetItems() end)
+        if ok and items then
+            for _, item in ipairs(items) do
+                local s = item:get()
+                if s.ItemType then
+                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                    if ok2 then
+                        local category = categories.getConsumableCategory(typeName)
+                        if category then
+                            local displayName = nil
+                            pcall(function() displayName = s.ItemType.Name:ToString() end)
+                            table.insert(restockCandidates, {
+                                itemId = s.ItemId,
+                                inventoryId = s.InventoryId,
+                                typeName = typeName,
+                                displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
+                                itemType = s.ItemType,
+                                category = category,
+                                priority = categories.getPriority(typeName, category),
+                                lockerInv = inv,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if #restockCandidates == 0 then
+        utils.Notify(L("nothing_to_restock"), config)
+        return
+    end
+
+    -- Reuse the same restock pass logic
+    local playerInvId = playerInv.InventoryId
+    local restockDetails = {}
+
+    local function recordRestock(candidate)
+        if not restockDetails[candidate.typeName] then
+            restockDetails[candidate.typeName] = {
+                itemType = candidate.itemType,
+                displayName = candidate.displayName,
+                count = 0,
+                containers = {},
+            }
+        end
+        restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
+        restockDetails[candidate.typeName].containers["Locker"] = true
+    end
+
+    -- Scan player consumables
+    local heldByCategory = { food = {}, drink = {}, heal = {} }
+    local currentCounts = { food = 0, drink = 0, heal = 0 }
+    local playerItems = playerInv:GetItems()
+    for _, item in ipairs(playerItems) do
+        local s = item:get()
+        if s.ItemType then
+            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+            if ok then
+                local cat = categories.getConsumableCategory(typeName)
+                if cat then
+                    currentCounts[cat] = currentCounts[cat] + 1
+                    table.insert(heldByCategory[cat], {
+                        itemId = s.ItemId,
+                        inventoryId = s.InventoryId,
+                        typeName = typeName,
+                        priority = categories.getPriority(typeName, cat),
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(restockCandidates, function(a, b) return a.priority < b.priority end)
+    for _, items in pairs(heldByCategory) do
+        table.sort(items, function(a, b) return a.priority > b.priority end)
+    end
+
+    -- Fill shortfalls
+    local budgets = {
+        food  = math.max(0, (config.RestockFoodCount or 0)  - currentCounts.food),
+        drink = math.max(0, (config.RestockDrinkCount or 0) - currentCounts.drink),
+        heal  = math.max(0, (config.RestockHealCount or 0)  - currentCounts.heal),
+    }
+
+    local usedCandidates = {}
+    for i, candidate in ipairs(restockCandidates) do
+        local cat = candidate.category
+        if budgets[cat] and budgets[cat] > 0 then
+            local ok = pcall(function()
+                playerInv:MoveItemBetweenInventories(candidate.itemId, candidate.inventoryId, playerInvId)
+            end)
+            if ok then
+                budgets[cat] = budgets[cat] - 1
+                usedCandidates[i] = true
+                recordRestock(candidate)
+            end
+        end
+    end
+
+    -- Upgrade pass
+    local configBudgets = {
+        food  = config.RestockFoodCount or 0,
+        drink = config.RestockDrinkCount or 0,
+        heal  = config.RestockHealCount or 0,
+    }
+    for _, cat in ipairs({"food", "drink", "heal"}) do
+        if configBudgets[cat] == 0 then goto nextRestockCat end
+        local held = heldByCategory[cat]
+        if #held == 0 then goto nextRestockCat end
+
+        for i, candidate in ipairs(restockCandidates) do
+            if usedCandidates[i] then goto nextRestockCandidate end
+            if candidate.category ~= cat then goto nextRestockCandidate end
+
+            local worst = held[1]
+            if not worst or candidate.priority >= worst.priority then break end
+
+            local stashOk = pcall(function()
+                playerInv:MoveItemBetweenInventories(worst.itemId, worst.inventoryId, candidate.inventoryId)
+            end)
+            if stashOk then
+                local pullOk = pcall(function()
+                    playerInv:MoveItemBetweenInventories(candidate.itemId, candidate.inventoryId, playerInvId)
+                end)
+                if pullOk then
+                    usedCandidates[i] = true
+                    table.remove(held, 1)
+                    recordRestock(candidate)
+                else
+                    pcall(function()
+                        playerInv:MoveItemBetweenInventories(worst.itemId, candidate.inventoryId, worst.inventoryId)
+                    end)
+                end
+            end
+
+            ::nextRestockCandidate::
+        end
+
+        ::nextRestockCat::
+    end
+
+    -- Show results
+    local restockCount = 0
+    for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
+    if restockCount > 0 then
+        utils.Notify(L("restocked", restockCount), config)
+        showTransferSummary({}, {}, restockDetails)
+    else
+        utils.Notify(L("nothing_to_restock"), config)
+    end
+end
+
 --- Check if any text input field has keyboard focus
 --- Suppresses hotkeys during label editing, F8 bug reports, chat, etc.
 --- Does NOT suppress when inventory or container UI is open (no text input focused)
@@ -1322,3 +1529,23 @@ RegisterKeyBind(bindKeyOverflow, function()
         doSortOverflow()
     end)
 end)
+
+-- Restock-only keybind (only registered when configured and different from quickstack key)
+if not restockWithQuickstack and config.KeybindRestock ~= "" then
+    local bindKeyRestock = keyMap[config.KeybindRestock]
+    if not bindKeyRestock then
+        print(string.format("[QuickStack] ERROR: Unknown keybind_restock '%s'\n", config.KeybindRestock))
+    else
+        RegisterKeyBind(bindKeyRestock, function()
+            ExecuteInGameThread(function()
+                if isTextInputFocused() then return end
+                local now = os.clock()
+                if now - lastActivation < config.Cooldown then return end
+                lastActivation = now
+                config.refreshModSettings()
+                doRestockOnly()
+            end)
+        end)
+        print(string.format("[QuickStack] Restock keybind registered: %s\n", config.KeybindRestock))
+    end
+end
