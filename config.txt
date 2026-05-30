@@ -69,3 +69,12 @@ summary_show_destination=true
 
 # How long the summary panel stays on screen (seconds)
 summary_duration=6
+
+# Truncate destination labels to this many characters (0 = no truncation)
+summary_truncate=15
+
+# Summary panel position (right or left)
+summary_position=right
+
+# Summary panel text scale (0.5 = half size, 1.0 = default, 2.0 = double)
+summary_text_scale=1.0

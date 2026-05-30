@@ -6,6 +6,8 @@ local UEHelpers = require("UEHelpers")
 local ui = {}
 local config = nil
 local activeSummaryPanel = nil
+local gameFont = nil
+local DEFAULT_FONT_SIZE = 24
 
 function ui.init(cfg)
     config = cfg
@@ -87,15 +89,50 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
     local vbox = make(vboxCls, "VBox")
     if not vbox then return end
 
+    local isLeft = (config.SummaryPosition or "right") == "left"
     pcall(function()
         local slot = canvas:AddChildToCanvas(vbox)
         if slot then
-            slot:SetAnchors({ Minimum = { X = 1.0, Y = 0.3 }, Maximum = { X = 1.0, Y = 0.3 } })
-            slot:SetAlignment({ X = 1.0, Y = 0.0 })
-            slot:SetPosition({ X = -20, Y = 0 })
+            if isLeft then
+                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.58 }, Maximum = { X = 0.0, Y = 0.58 } })
+                slot:SetAlignment({ X = 0.0, Y = 0.0 })
+                slot:SetPosition({ X = 20, Y = 0 })
+            else
+                slot:SetAnchors({ Minimum = { X = 1.0, Y = 0.3 }, Maximum = { X = 1.0, Y = 0.3 } })
+                slot:SetAlignment({ X = 1.0, Y = 0.0 })
+                slot:SetPosition({ X = -20, Y = 0 })
+            end
             slot:SetAutoSize(true)
         end
     end)
+
+    local textScale = config.SummaryTextScale or 1.0
+
+    -- Capture game font from any existing TextBlock (once)
+    if not gameFont then
+        pcall(function()
+            local allTb = FindAllOf("TextBlock")
+            if allTb then
+                for _, tb in ipairs(allTb) do
+                    if tb:IsValid() then
+                        gameFont = tb.Font
+                        break
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Apply scaled font to a TextBlock
+    local function applyFont(tb)
+        if not gameFont then return end
+        pcall(function()
+            local f = tb.Font
+            f.FontObject = gameFont.FontObject
+            f.Size = math.floor(DEFAULT_FONT_SIZE * textScale)
+            tb:SetFont(f)
+        end)
+    end
 
     -- Helper to build rows from a details table
     local function buildRows(details, prefix, arrowDir)
@@ -130,6 +167,7 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
             local text1 = make(textCls, prefix .. "Name")
             if text1 then
                 pcall(function() text1:SetText(FText(cleanName .. " x" .. detail.count)) end)
+                applyFont(text1)
                 pcall(function() hbox:AddChildToHorizontalBox(text1) end)
             end
 
@@ -142,8 +180,12 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
                     local text2 = make(textCls, prefix .. "Dest")
                     if text2 then
                         local destRaw = table.concat(labels, ", ")
-                        if #destRaw > 15 then destRaw = destRaw:sub(1, 15) .. "..." end
+                        local truncLen = config.SummaryTruncate or 0
+                        if truncLen > 0 and #destRaw > truncLen then
+                            destRaw = destRaw:sub(1, truncLen) .. "..."
+                        end
                         pcall(function() text2:SetText(FText(arrowDir .. destRaw)) end)
+                        applyFont(text2)
                         pcall(function() hbox:AddChildToHorizontalBox(text2) end)
                     end
                 end
@@ -157,6 +199,7 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
         local sepText = make(textCls, "Sep")
         if sepText then
             pcall(function() sepText:SetText(FText(label)) end)
+            applyFont(sepText)
             pcall(function()
                 local sepSlot = vbox:AddChildToVerticalBox(sepText)
                 if sepSlot then
@@ -189,8 +232,9 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
     end
 
     -- Display with slide-in + fade-in animation
+    local slideDir = isLeft and -1 or 1
     pcall(function() vbox:SetRenderOpacity(0) end)
-    pcall(function() vbox:SetRenderTranslation({ X = 150, Y = 0 }) end)
+    pcall(function() vbox:SetRenderTranslation({ X = 150 * slideDir, Y = 0 }) end)
     pcall(function() root:AddToViewport(150) end)
     activeSummaryPanel = root
 
@@ -203,7 +247,7 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
                 local t = step / animSteps
                 local eased = 1 - (1 - t) * (1 - t) * (1 - t)
                 pcall(function() vbox:SetRenderOpacity(eased) end)
-                pcall(function() vbox:SetRenderTranslation({ X = 250 * (1 - eased), Y = 0 }) end)
+                pcall(function() vbox:SetRenderTranslation({ X = 250 * slideDir * (1 - eased), Y = 0 }) end)
             end)
         end)
     end

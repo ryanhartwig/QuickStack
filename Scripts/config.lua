@@ -24,6 +24,9 @@ config.LabelMaxChars = 50
 config.SummaryPanel = true
 config.SummaryShowDestination = true
 config.SummaryDuration = 6
+config.SummaryPosition = "right"
+config.SummaryTextScale = 1.0
+config.SummaryTruncate = 15
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -101,6 +104,13 @@ local function loadConfig()
                     config.SummaryShowDestination = (value == "true")
                 elseif key == "summary_duration" then
                     config.SummaryDuration = tonumber(value) or 6
+                elseif key == "summary_truncate" then
+                    config.SummaryTruncate = tonumber(value) or 0
+                elseif key == "summary_position" then
+                    local v = value:lower()
+                    if v == "left" or v == "right" then config.SummaryPosition = v end
+                elseif key == "summary_text_scale" then
+                    config.SummaryTextScale = tonumber(value) or 1.0
                 end
             end
         end
