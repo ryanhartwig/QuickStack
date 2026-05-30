@@ -519,27 +519,31 @@ local function doBatterySwap(pawn, playerInv)
         if bestIdx then
             local cb = chargerBatteries[bestIdx]
 
-            -- Step 1: Move player battery to charger
-            local ok1 = pcall(function()
+            -- Pull from charger first (frees slot if full), then push player battery in.
+            -- Step 1: Pull higher-charge battery from charger to player
+            local beforePull = #playerInv:GetItems()
+            pcall(function()
                 playerInv:MoveItemBetweenInventories(
-                    playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
+                    cb.itemId, cb.inventoryId, playerInv.InventoryId)
             end)
+            local afterPull = #playerInv:GetItems()
 
-            if ok1 then
-                -- Step 2: Move charger battery to player
-                local ok2 = pcall(function()
+            if afterPull > beforePull then
+                -- Step 2: Push player's lower-charge battery to charger (slot available)
+                pcall(function()
                     playerInv:MoveItemBetweenInventories(
-                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
+                        playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
                 end)
+                local afterPush = #playerInv:GetItems()
 
-                if ok2 then
+                if afterPush < afterPull then
                     swapCount = swapCount + 1
                     cb.used = true
                 else
-                    -- Rollback
+                    -- Push failed, return charger battery
                     pcall(function()
                         playerInv:MoveItemBetweenInventories(
-                            playerBat.itemId, cb.chargerInv.InventoryId, playerBat.inventoryId)
+                            cb.itemId, playerInv.InventoryId, cb.inventoryId)
                     end)
                 end
             end
