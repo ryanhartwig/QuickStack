@@ -170,7 +170,7 @@ local shouldKeepItem = categories.shouldKeepItem
 local readItemInfo = utils.readItemInfo
 local readItemTypeName = utils.readItemTypeName
 local scoreLockerMatch = matching.scoreLockerMatch
-local waitForReplication = ui.waitForReplication
+local waitForReplication = utils.waitForReplication
 local showTransferSummary = ui.showTransferSummary
 
 -- Constants
@@ -355,36 +355,6 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
     return actualTransferred, numContainers, someFull, transferDetails
-end
-
---- Show the appropriate notification for a quick-stack result
-local function showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
-    local function buildMessage(transferred, containers, full, swaps)
-        local parts = {}
-        if transferred > 0 then
-            if full then
-                table.insert(parts, L("stacked_full", transferred, containers))
-            else
-                table.insert(parts, L("stacked", transferred, containers))
-            end
-        end
-        if swaps > 0 then
-            table.insert(parts, L("swapped", swaps))
-        end
-        if #parts == 0 then
-            if full then return L("no_match_full") end
-            return L("no_match")
-        end
-        return table.concat(parts, " | ")
-    end
-
-    if actualTransferred <= 0 and numContainers > 0 then
-        waitForReplication(playerInv, totalItemsBefore, function(confirmedCount)
-            utils.Notify(buildMessage(confirmedCount, numContainers, someFull, swapCount), config)
-        end)
-    else
-        utils.Notify(buildMessage(actualTransferred, numContainers, someFull, swapCount), config)
-    end
 end
 
 --- Quick Stack: transfer matching items to nearby containers + battery swap

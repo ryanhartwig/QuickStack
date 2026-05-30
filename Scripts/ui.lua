@@ -13,26 +13,6 @@ function ui.init(cfg)
     config = cfg
 end
 
---- Wait for server replication before reading inventory
---- Polls every 100ms until item count changes or timeout reached
---- Host: 0ms (instant). Non-host: ~100-200ms typical, 1500ms max.
-function ui.waitForReplication(inventory, countBefore, callback, maxWaitMs)
-    maxWaitMs = maxWaitMs or 1500
-    local elapsed = 0
-    local function check()
-        local current = #inventory:GetItems()
-        if current < countBefore or elapsed >= maxWaitMs then
-            callback(countBefore - current)
-        else
-            elapsed = elapsed + 100
-            ExecuteWithDelay(100, function()
-                ExecuteInGameThread(check)
-            end)
-        end
-    end
-    check()
-end
-
 --- Show the transfer summary panel
 --- transferDetails: normal transfers (item → locker)
 --- overflowDetails: overflow dumps (item → %o locker)

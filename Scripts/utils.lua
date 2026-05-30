@@ -318,4 +318,24 @@ function utils.recordDetail(detailsTable, typeName, itemType, displayName, conta
     detailsTable[typeName].containers[containerLabel] = true
 end
 
+--- Wait for server replication before reading inventory
+--- Polls every 100ms until item count changes or timeout reached
+--- Host: 0ms (instant). Non-host: ~100-200ms typical, 1500ms max.
+function utils.waitForReplication(inventory, countBefore, callback, maxWaitMs)
+    maxWaitMs = maxWaitMs or 1500
+    local elapsed = 0
+    local function check()
+        local current = #inventory:GetItems()
+        if current < countBefore or elapsed >= maxWaitMs then
+            callback(countBefore - current)
+        else
+            elapsed = elapsed + 100
+            ExecuteWithDelay(100, function()
+                ExecuteInGameThread(check)
+            end)
+        end
+    end
+    check()
+end
+
 return utils
