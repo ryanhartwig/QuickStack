@@ -174,7 +174,7 @@ local waitForReplication = ui.waitForReplication
 local showTransferSummary = ui.showTransferSummary
 
 -- Constants
-local DEFAULT_MAX_ITEMS = 30
+local DEFAULT_MAX_ITEMS = utils.DEFAULT_MAX_ITEMS
 
 --- Get the inventory component of the currently open container
 local function getOpenContainerInventory()
@@ -289,29 +289,7 @@ end
 
 --- Transfer matching items from player inventory to nearby containers
 local function transferToLockers(playerInv, transferableItems, totalItemsBefore, nearbyLockers)
-    local lockerTypeData = {}
-    local lockerLabels = {}
-    local lockerItemCount = {}
-    local lockerMaxItems = {}
-
-    for i, data in ipairs(nearbyLockers) do
-        lockerTypeData[i] = {}
-        lockerLabels[i] = data.label
-        lockerItemCount[i] = 0
-        local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
-        lockerMaxItems[i] = (ok0 and maxItems) or DEFAULT_MAX_ITEMS
-        local ok, lockerItems = pcall(function() return data.inventory:GetItems() end)
-        if ok and lockerItems then
-            lockerItemCount[i] = #lockerItems
-            for _, item in ipairs(lockerItems) do
-                local s = item:get()
-                local typeName = readItemTypeName(s)
-                if typeName then
-                    lockerTypeData[i][typeName] = (lockerTypeData[i][typeName] or 0) + (s.Count or 1)
-                end
-            end
-        end
-    end
+    local lockerTypeData, lockerItemCount, lockerMaxItems, lockerLabels = utils.snapshotLockerContents(nearbyLockers)
 
     local containersUsed = {}
     local someFull = false
@@ -656,28 +634,7 @@ local function doSortOverflow()
     end
 
     -- Snapshot target locker contents for type-count matching
-    local targetTypeData = {}
-    local targetItemCount = {}
-    local targetMaxItems = {}
-    local targetLabels = {}
-    for i, data in ipairs(targetLockers) do
-        targetTypeData[i] = {}
-        targetLabels[i] = data.label
-        targetItemCount[i] = 0
-        local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
-        targetMaxItems[i] = (ok0 and maxItems) or DEFAULT_MAX_ITEMS
-        local ok, items = pcall(function() return data.inventory:GetItems() end)
-        if ok and items then
-            targetItemCount[i] = #items
-            for _, item in ipairs(items) do
-                local s = item:get()
-                local typeName = readItemTypeName(s)
-                if typeName then
-                    targetTypeData[i][typeName] = (targetTypeData[i][typeName] or 0) + 1
-                end
-            end
-        end
-    end
+    local targetTypeData, targetItemCount, targetMaxItems, targetLabels = utils.snapshotLockerContents(targetLockers)
 
     -- Sort items from each overflow locker into targets
     local transferDetails = {}

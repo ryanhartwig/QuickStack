@@ -273,6 +273,37 @@ function utils.findAllNearbyInvs(pawn, radiusUnits)
     return invs
 end
 
+--- Default max items per container (fallback when MaxItems property is unavailable)
+utils.DEFAULT_MAX_ITEMS = 30
+
+--- Snapshot locker contents for type-count matching.
+--- Returns typeData, itemCount, maxItems, labels (parallel arrays indexed by locker position).
+function utils.snapshotLockerContents(lockerList)
+    local typeData = {}
+    local itemCount = {}
+    local maxItems = {}
+    local labels = {}
+    for i, data in ipairs(lockerList) do
+        typeData[i] = {}
+        labels[i] = data.label
+        itemCount[i] = 0
+        local ok0, max = pcall(function() return data.inventory.MaxItems end)
+        maxItems[i] = (ok0 and max) or utils.DEFAULT_MAX_ITEMS
+        local ok, items = pcall(function() return data.inventory:GetItems() end)
+        if ok and items then
+            itemCount[i] = #items
+            for _, item in ipairs(items) do
+                local s = item:get()
+                local typeName = utils.readItemTypeName(s)
+                if typeName then
+                    typeData[i][typeName] = (typeData[i][typeName] or 0) + 1
+                end
+            end
+        end
+    end
+    return typeData, itemCount, maxItems, labels
+end
+
 --- Record a transfer/restock detail entry for the summary panel.
 function utils.recordDetail(detailsTable, typeName, itemType, displayName, containerLabel)
     if not detailsTable[typeName] then
