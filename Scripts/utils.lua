@@ -273,4 +273,18 @@ function utils.findAllNearbyInvs(pawn, radiusUnits)
     return invs
 end
 
+--- Record a transfer/restock detail entry for the summary panel.
+function utils.recordDetail(detailsTable, typeName, itemType, displayName, containerLabel)
+    if not detailsTable[typeName] then
+        detailsTable[typeName] = {
+            itemType = itemType,
+            displayName = displayName,
+            count = 0,
+            containers = {},
+        }
+    end
+    detailsTable[typeName].count = detailsTable[typeName].count + 1
+    detailsTable[typeName].containers[containerLabel] = true
+end
+
 return utils

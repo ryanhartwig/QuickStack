@@ -314,20 +314,6 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
     local someFull = false
     local transferDetails = {}  -- keyed by typeName: { itemType, count, containers }
 
-    local function recordTransfer(item, lockerIdx)
-        local label = lockerLabels[lockerIdx] or "Unlabeled"
-        if not transferDetails[item.typeName] then
-            transferDetails[item.typeName] = {
-                itemType = item.itemType,
-                displayName = item.displayName,
-                count = 0,
-                containers = {},
-            }
-        end
-        transferDetails[item.typeName].count = transferDetails[item.typeName].count + 1
-        transferDetails[item.typeName].containers[label] = true
-    end
-
     for _, item in ipairs(transferableItems) do
         local bestLabelScore = 0
         local bestLabelIdx = nil
@@ -368,7 +354,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
                 containersUsed[bestIdx] = true
                 lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                 lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
-                recordTransfer(item, bestIdx)
+                utils.recordDetail(transferDetails, item.typeName, item.itemType, item.displayName, lockerLabels[bestIdx] or "Unlabeled")
             else
                 local ok4 = pcall(function()
                     playerInv:MoveInventoryItem(data.inventory, item.itemId, playerInv)
@@ -377,7 +363,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
                     containersUsed[bestIdx] = true
                     lockerTypeData[bestIdx][item.typeName] = (lockerTypeData[bestIdx][item.typeName] or 0) + item.count
                     lockerItemCount[bestIdx] = lockerItemCount[bestIdx] + 1
-                    recordTransfer(item, bestIdx)
+                    utils.recordDetail(transferDetails, item.typeName, item.itemType, item.displayName, lockerLabels[bestIdx] or "Unlabeled")
                 end
             end
         end
@@ -871,19 +857,6 @@ local function doQuickStack()
 
         local playerInvId = playerInv.InventoryId
 
-        local function recordRestock(candidate)
-            if not restockDetails[candidate.typeName] then
-                restockDetails[candidate.typeName] = {
-                    itemType = candidate.itemType,
-                    displayName = candidate.displayName,
-                    count = 0,
-                    containers = {},
-                }
-            end
-            restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
-            restockDetails[candidate.typeName].containers["Locker"] = true
-        end
-
         -- Scan player's current consumables with full item data
         local heldByCategory = { food = {}, drink = {}, heal = {} }
         local currentCounts = { food = 0, drink = 0, heal = 0 }
@@ -929,7 +902,7 @@ local function doQuickStack()
                 if ok then
                     budgets[cat] = budgets[cat] - 1
                     usedCandidates[i] = true
-                    recordRestock(candidate)
+                    utils.recordDetail(restockDetails, candidate.typeName, candidate.itemType, candidate.displayName, "Locker")
                 end
             end
         end
@@ -968,7 +941,7 @@ local function doQuickStack()
                     if pullOk then
                         usedCandidates[i] = true
                         table.remove(held, 1)  -- remove worst from tracking
-                        recordRestock(candidate)
+                        utils.recordDetail(restockDetails, candidate.typeName, candidate.itemType, candidate.displayName, "Locker")
                     else
                         -- Pull failed, reverse the stash
                         pcall(function()
@@ -1091,16 +1064,7 @@ local function doQuickStack()
                     if ok then
                         overflowContainersUsed[i] = true
                         overflowItemCount[i] = overflowItemCount[i] + 1
-                        if not overflowDetails[item.typeName] then
-                            overflowDetails[item.typeName] = {
-                                itemType = item.itemType,
-                                displayName = item.displayName,
-                                count = 0,
-                                containers = {},
-                            }
-                        end
-                        overflowDetails[item.typeName].count = overflowDetails[item.typeName].count + 1
-                        overflowDetails[item.typeName].containers[data.label or "Overflow"] = true
+                        utils.recordDetail(overflowDetails, item.typeName, item.itemType, item.displayName, data.label or "Overflow")
                         break
                     end
                 end
@@ -1280,18 +1244,7 @@ local function doSortOverflow()
                     targetTypeData[bestIdx][typeName] = (targetTypeData[bestIdx][typeName] or 0) + 1
                     targetItemCount[bestIdx] = targetItemCount[bestIdx] + 1
                     totalMoved = totalMoved + 1
-                    -- Record transfer details
-                    if not transferDetails[typeName] then
-                        transferDetails[typeName] = {
-                            itemType = s.ItemType,
-                            displayName = displayName,
-                            count = 0,
-                            containers = {},
-                        }
-                    end
-                    transferDetails[typeName].count = transferDetails[typeName].count + 1
-                    local targetLabel = targetLabels[bestIdx] or "Unlabeled"
-                    transferDetails[typeName].containers[targetLabel] = true
+                    utils.recordDetail(transferDetails, typeName, s.ItemType, displayName, targetLabels[bestIdx] or "Unlabeled")
                 end
             end
 
@@ -1397,19 +1350,6 @@ local function doRestockOnly()
     local playerInvId = playerInv.InventoryId
     local restockDetails = {}
 
-    local function recordRestock(candidate)
-        if not restockDetails[candidate.typeName] then
-            restockDetails[candidate.typeName] = {
-                itemType = candidate.itemType,
-                displayName = candidate.displayName,
-                count = 0,
-                containers = {},
-            }
-        end
-        restockDetails[candidate.typeName].count = restockDetails[candidate.typeName].count + 1
-        restockDetails[candidate.typeName].containers["Locker"] = true
-    end
-
     -- Scan player consumables
     local heldByCategory = { food = {}, drink = {}, heal = {} }
     local currentCounts = { food = 0, drink = 0, heal = 0 }
@@ -1453,7 +1393,7 @@ local function doRestockOnly()
             if ok then
                 budgets[cat] = budgets[cat] - 1
                 usedCandidates[i] = true
-                recordRestock(candidate)
+                utils.recordDetail(restockDetails, candidate.typeName, candidate.itemType, candidate.displayName, "Locker")
             end
         end
     end
@@ -1486,7 +1426,7 @@ local function doRestockOnly()
                 if pullOk then
                     usedCandidates[i] = true
                     table.remove(held, 1)
-                    recordRestock(candidate)
+                    utils.recordDetail(restockDetails, candidate.typeName, candidate.itemType, candidate.displayName, "Locker")
                 else
                     pcall(function()
                         playerInv:MoveItemBetweenInventories(worst.itemId, candidate.inventoryId, worst.inventoryId)
@@ -1538,51 +1478,36 @@ if config.LabelMaxChars and config.LabelMaxChars > 0 then
     end)
 end
 
--- Keybind registration (config.txt only — keybinds are set-and-forget)
-RegisterKeyBind(bindKey, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
-        doQuickStack()
+-- Keybind helper: wraps action in cooldown + text-input guard
+local function registerCooldownBind(key, actionFn)
+    RegisterKeyBind(key, function()
+        ExecuteInGameThread(function()
+            if isTextInputFocused() then return end
+            local now = os.clock()
+            if now - lastActivation < config.Cooldown then return end
+            lastActivation = now
+            config.refreshModSettings()
+            actionFn()
+        end)
     end)
-end)
+end
+
+-- Keybind registration (config.txt only — keybinds are set-and-forget)
+registerCooldownBind(bindKey, doQuickStack)
 
 local bindKeyOpen = keyMap[config.KeybindOpen]
 if not bindKeyOpen then
     print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
     bindKeyOpen = Key.G
 end
-
-RegisterKeyBind(bindKeyOpen, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
-        doQuickStackOpen()
-    end)
-end)
+registerCooldownBind(bindKeyOpen, doQuickStackOpen)
 
 local bindKeyOverflow = keyMap[config.KeybindOverflow]
 if not bindKeyOverflow then
     print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
     bindKeyOverflow = Key.H
 end
-
-RegisterKeyBind(bindKeyOverflow, function()
-    ExecuteInGameThread(function()
-        if isTextInputFocused() then return end
-        local now = os.clock()
-        if now - lastActivation < config.Cooldown then return end
-        lastActivation = now
-        config.refreshModSettings()
-        doSortOverflow()
-    end)
-end)
+registerCooldownBind(bindKeyOverflow, doSortOverflow)
 
 -- Restock-only keybind (only registered when configured and different from quickstack key)
 if not restockWithQuickstack and config.KeybindRestock ~= "" then
@@ -1590,16 +1515,7 @@ if not restockWithQuickstack and config.KeybindRestock ~= "" then
     if not bindKeyRestock then
         print(string.format("[QuickStack] ERROR: Unknown keybind_restock '%s'\n", config.KeybindRestock))
     else
-        RegisterKeyBind(bindKeyRestock, function()
-            ExecuteInGameThread(function()
-                if isTextInputFocused() then return end
-                local now = os.clock()
-                if now - lastActivation < config.Cooldown then return end
-                lastActivation = now
-                config.refreshModSettings()
-                doRestockOnly()
-            end)
-        end)
+        registerCooldownBind(bindKeyRestock, doRestockOnly)
         print(string.format("[QuickStack] Restock keybind registered: %s\n", config.KeybindRestock))
     end
 end
