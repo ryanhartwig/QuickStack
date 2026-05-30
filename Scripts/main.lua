@@ -369,10 +369,11 @@ local function doQuickStack()
     end
 
     -- Battery management runs first (terminal stash/swap/pull) so getTransferableItems
-    -- sees the post-management inventory and correctly marks remaining excess as transferable
+    -- sees the post-management inventory and correctly marks remaining excess as transferable.
+    -- Only runs on quickstack key if restock is not split to a separate keybind.
     local batteryStashCount, batteryPullCount = 0, 0
     local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
-    if anyBatteryBudget then
+    if anyBatteryBudget and restockWithQuickstack then
         batteryStashCount, batteryPullCount = battery.doBatteryManagement(pawn, playerInv)
     end
 
@@ -603,10 +604,13 @@ local function doSortOverflow()
         return
     end
 
+    -- Route batteries to terminals FIRST (chargers have priority over lockers)
+    local batteryRouted, batteryMovedIds = battery.routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers)
+
     -- Snapshot target locker contents for type-count matching
     local targetTypeData, targetItemCount, targetMaxItems, targetLabels = utils.snapshotLockerContents(targetLockers)
 
-    -- Sort items from each overflow locker into targets
+    -- Sort remaining items from overflow lockers into targets (skip batteries already routed)
     local transferDetails = {}
     local totalMoved = 0
     local containersUsed = {}
@@ -615,10 +619,12 @@ local function doSortOverflow()
     for _, overflowData in ipairs(overflowLockers) do
         local ok, overflowItems = pcall(function() return overflowData.inventory:GetItems() end)
         if not ok or not overflowItems then goto nextOverflowLocker end
-        local totalBeforeThisLocker = #overflowItems
 
         for _, rawItem in ipairs(overflowItems) do
             local s = rawItem:get()
+            -- Skip items already routed to terminals
+            if batteryMovedIds[s.ItemId] then goto nextOverflowItem end
+
             local info = readItemInfo(s)
             if not info then goto nextOverflowItem end
 
@@ -675,9 +681,6 @@ local function doSortOverflow()
         ::nextOverflowLocker::
     end
 
-    -- Route batteries from overflow to Battery Terminal
-    local batteryRouted = battery.routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers)
-
     if totalMoved == 0 and batteryRouted == 0 then
         utils.Notify(L("no_overflow_sorted"), config)
         return
@@ -717,33 +720,54 @@ local function doRestockOnly()
         utils.Notify(L("no_inventory"), config)
         return
     end
-    if not restock.isEnabled() then
+
+    local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
+    if not restock.isEnabled() and not anyBatteryBudget then
         utils.Notify(L("nothing_to_restock"), config)
         return
     end
 
-    local radiusUnits = utils.MetersToUnits(config.Radius)
-    local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
-    if #allLockerInvs == 0 then
-        utils.Notify(L("no_match"), config)
-        return
+    -- Battery management (budget-based terminal stash/swap/pull)
+    local batteryStashCount, batteryPullCount = 0, 0
+    if anyBatteryBudget then
+        batteryStashCount, batteryPullCount = battery.doBatteryManagement(pawn, playerInv)
     end
 
-    local candidates = restock.buildCandidates(allLockerInvs)
-    if #candidates == 0 then
-        utils.Notify(L("nothing_to_restock"), config)
-        return
+    -- Consumable restock
+    local restockDetails = {}
+    if restock.isEnabled() then
+        local radiusUnits = utils.MetersToUnits(config.Radius)
+        local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
+        if #allLockerInvs > 0 then
+            local candidates = restock.buildCandidates(allLockerInvs)
+            if #candidates > 0 then
+                restockDetails = restock.execute(playerInv, candidates)
+            end
+        end
     end
 
-    local restockDetails = restock.execute(playerInv, candidates)
+    -- Show results
     local restockCount = 0
     for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
-    if restockCount > 0 then
-        utils.Notify(L("restocked", restockCount), config)
-        showTransferSummary({}, {}, restockDetails)
-    else
+    local batteryActivity = batteryStashCount + batteryPullCount
+
+    if restockCount == 0 and batteryActivity == 0 then
         utils.Notify(L("nothing_to_restock"), config)
+        return
     end
+
+    local parts = {}
+    if batteryStashCount > 0 then
+        table.insert(parts, L("battery_stashed", batteryStashCount))
+    end
+    if batteryPullCount > 0 then
+        table.insert(parts, L("battery_pulled", batteryPullCount))
+    end
+    if restockCount > 0 then
+        table.insert(parts, L("restocked", restockCount))
+    end
+    utils.Notify(table.concat(parts, " | "), config)
+    showTransferSummary({}, {}, restockDetails)
 end
 
 --- Check if any text input field has keyboard focus
