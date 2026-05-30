@@ -438,35 +438,9 @@ end
 local function doBatterySwap(pawn, playerInv)
     if not config.BatterySwap then return 0 end
 
-    local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
-
-    -- Find chargers — whitelist known charger classes to avoid stripping vehicles (Tadpole etc.)
-    local CHARGER_CLASSES = {
-        BP_BasicBatteryTerminal_C = true,
-        BP_PowerCellTerminal_C = true,
-    }
-    local chargers = FindAllOf("UWEPowerTerminal")
-    if not chargers then return 0 end
-
-    -- Collect nearby charger inventories (only whitelisted terminal classes)
-    local chargerInvs = {}
-    for _, charger in ipairs(chargers) do
-        if charger:IsValid() then
-            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
-            if okCls and CHARGER_CLASSES[className] then
-                local dist = utils.GetDistance(pawn, charger)
-                if dist <= radiusUnits then
-                    local ok, inv = pcall(function() return charger.InventoryComponent end)
-                    if ok and inv and inv:IsValid() then
-                        table.insert(chargerInvs, inv)
-                    end
-                end
-            end
-        end
-    end
-
-    if #chargerInvs == 0 then return 0 end
+    local allTerminals = utils.findNearbyTerminals(pawn, radiusUnits)
+    if #allTerminals == 0 then return 0 end
 
     -- Get player batteries with charge info
     local playerItems = playerInv:GetItems()
@@ -499,8 +473,8 @@ local function doBatterySwap(pawn, playerInv)
 
     -- Snapshot all charger batteries upfront (avoids stale GetItems after swaps)
     local chargerBatteries = {} -- { typeName, charge, itemId, inventoryId, chargerInv, used }
-    for _, chargerInv in ipairs(chargerInvs) do
-        local ok, chargerItems = pcall(function() return chargerInv:GetItems() end)
+    for _, term in ipairs(allTerminals) do
+        local ok, chargerItems = pcall(function() return term.inv:GetItems() end)
         if ok and chargerItems then
             for _, cItem in ipairs(chargerItems) do
                 local cs = cItem:get()
@@ -513,7 +487,7 @@ local function doBatterySwap(pawn, playerInv)
                             charge = cCurrent,
                             itemId = cs.ItemId,
                             inventoryId = cs.InventoryId,
-                            chargerInv = chargerInv,
+                            chargerInv = term.inv,
                             used = false,
                         })
                     end
@@ -589,33 +563,7 @@ local function doBatteryManagement(pawn, playerInv)
     if batteryBudget <= 0 and powerCellBudget <= 0 then return 0, 0, {} end
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
-
-    -- Find nearby Battery/Power Cell Terminals
-    local CHARGER_CLASSES = {
-        BP_BasicBatteryTerminal_C = true,
-        BP_PowerCellTerminal_C = true,
-    }
-    local chargers = FindAllOf("UWEPowerTerminal")
-    if not chargers then return 0, 0, {} end
-
-    local terminalInvs = {}  -- { inv, forPowerCell }
-    for _, charger in ipairs(chargers) do
-        if charger:IsValid() then
-            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
-            if okCls and CHARGER_CLASSES[className] then
-                local dist = utils.GetDistance(pawn, charger)
-                if dist <= radiusUnits then
-                    local ok, inv = pcall(function() return charger.InventoryComponent end)
-                    if ok and inv and inv:IsValid() then
-                        table.insert(terminalInvs, {
-                            inv = inv,
-                            forPowerCell = (className == "BP_PowerCellTerminal_C"),
-                        })
-                    end
-                end
-            end
-        end
-    end
+    local terminalInvs = utils.findNearbyTerminals(pawn, radiusUnits)
 
     local playerInvId = playerInv.InventoryId
     local stashCount = 0
@@ -825,32 +773,7 @@ local function routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers
     if batteryBudget <= 0 then return 0 end
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
-    local CHARGER_CLASSES = {
-        BP_BasicBatteryTerminal_C = true,
-        BP_PowerCellTerminal_C = true,
-    }
-    local chargers = FindAllOf("UWEPowerTerminal")
-    if not chargers then return 0 end
-
-    local terminalInvs = {}  -- { inv, forPowerCell }
-    for _, charger in ipairs(chargers) do
-        if charger:IsValid() then
-            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
-            if okCls and CHARGER_CLASSES[className] then
-                local dist = utils.GetDistance(pawn, charger)
-                if dist <= radiusUnits then
-                    local ok, inv = pcall(function() return charger.InventoryComponent end)
-                    if ok and inv and inv:IsValid() then
-                        table.insert(terminalInvs, {
-                            inv = inv,
-                            forPowerCell = (className == "BP_PowerCellTerminal_C"),
-                        })
-                    end
-                end
-            end
-        end
-    end
-
+    local terminalInvs = utils.findNearbyTerminals(pawn, radiusUnits)
     if #terminalInvs == 0 then return 0 end
 
     local moved = 0

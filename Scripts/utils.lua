@@ -94,4 +94,35 @@ function utils.readItemTypeName(itemStruct)
     return nil
 end
 
+--- Find nearby battery/power cell charger terminals.
+--- Returns list of { inv (InventoryComponent), forPowerCell (bool) }.
+function utils.findNearbyTerminals(pawn, radiusUnits)
+    local CHARGER_CLASSES = {
+        BP_BasicBatteryTerminal_C = true,
+        BP_PowerCellTerminal_C = true,
+    }
+    local chargers = FindAllOf("UWEPowerTerminal")
+    if not chargers then return {} end
+
+    local terminals = {}
+    for _, charger in ipairs(chargers) do
+        if charger:IsValid() then
+            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
+            if okCls and CHARGER_CLASSES[className] then
+                local dist = utils.GetDistance(pawn, charger)
+                if dist <= radiusUnits then
+                    local ok, inv = pcall(function() return charger.InventoryComponent end)
+                    if ok and inv and inv:IsValid() then
+                        table.insert(terminals, {
+                            inv = inv,
+                            forPowerCell = (className == "BP_PowerCellTerminal_C"),
+                        })
+                    end
+                end
+            end
+        end
+    end
+    return terminals
+end
+
 return utils
