@@ -53,6 +53,10 @@ do
           description='%s',
           type="slider", default=2, min=0, max=10, step=1, format="integer" },
 
+        { key="restock_battery_count", title='%s',
+          description='%s',
+          type="slider", default=0, min=0, max=10, step=1, format="integer" },
+
         { key="summary_panel", title='%s',
           description='%s',
           type="toggle", default=true },
@@ -69,6 +73,7 @@ do
         esc(L("food_title")), esc(L("food_desc")),
         esc(L("drink_title")), esc(L("drink_desc")),
         esc(L("heal_title")), esc(L("heal_desc")),
+        esc(L("battery_budget_title")), esc(L("battery_budget_desc")),
         esc(L("summary_title")), esc(L("summary_desc")),
         esc(L("summary_dur_title")), esc(L("summary_dur_desc"))
         )
@@ -546,6 +551,314 @@ local function doBatterySwap(pawn, playerInv)
     return swapCount
 end
 
+--- Battery management: stash excess batteries to Battery Terminal, pull to fill budget
+--- Returns stashCount, pullCount, unplacedBatteries (items that couldn't go to Terminal)
+local function doBatteryManagement(pawn, playerInv)
+    local batteryBudget = config.RestockBatteryCount or 0
+    if batteryBudget <= 0 then return 0, 0, {} end
+
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+
+    -- Find nearby Battery Terminals
+    local CHARGER_CLASSES = {
+        BP_BasicBatteryTerminal_C = true,
+        BP_PowerCellTerminal_C = true,
+    }
+    local chargers = FindAllOf("UWEPowerTerminal")
+    if not chargers then return 0, 0 end
+
+    local terminalInvs = {}
+    for _, charger in ipairs(chargers) do
+        if charger:IsValid() then
+            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
+            if okCls and CHARGER_CLASSES[className] then
+                local dist = utils.GetDistance(pawn, charger)
+                if dist <= radiusUnits then
+                    local ok, inv = pcall(function() return charger.InventoryComponent end)
+                    if ok and inv and inv:IsValid() then
+                        table.insert(terminalInvs, inv)
+                    end
+                end
+            end
+        end
+    end
+
+    local playerInvId = playerInv.InventoryId
+    local stashCount = 0
+    local pullCount = 0
+
+    -- Get current player batteries sorted by charge (worst first)
+    local playerBatteries = {}
+    local playerItems = playerInv:GetItems()
+    for _, item in ipairs(playerItems) do
+        local s = item:get()
+        if s.ItemType then
+            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+            if ok and isBatteryType(typeName) then
+                local current, max = readCharge(s)
+                if current and max and max > 0 then
+                    local displayName = nil
+                    pcall(function() displayName = s.ItemType.Name:ToString() end)
+                    if not displayName or displayName == "" then
+                        displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+                    end
+                    table.insert(playerBatteries, {
+                        typeName = typeName,
+                        displayName = displayName,
+                        itemType = s.ItemType,
+                        itemId = s.ItemId,
+                        inventoryId = s.InventoryId,
+                        charge = current,
+                        chargePercent = current / max,
+                        count = s.Count or 1,
+                    })
+                end
+            end
+        end
+    end
+
+    local unplaced = {}
+
+    -- No terminals: all excess batteries become unplaced for normal locker routing
+    if #terminalInvs == 0 then
+        if #playerBatteries > batteryBudget then
+            table.sort(playerBatteries, function(a, b) return a.chargePercent > b.chargePercent end)
+            for i = batteryBudget + 1, #playerBatteries do
+                table.insert(unplaced, playerBatteries[i])
+            end
+        end
+        return 0, 0, unplaced
+    end
+
+    if #playerBatteries > batteryBudget then
+        -- Sort worst charge first — stash worst ones
+        table.sort(playerBatteries, function(a, b) return a.chargePercent < b.chargePercent end)
+        local toStash = #playerBatteries - batteryBudget
+
+        -- Snapshot terminal batteries for swap fallback (when terminal is full,
+        -- swap player's low-charge battery with terminal's highest-charge one)
+        local termBatteries = {}
+        for _, inv in ipairs(terminalInvs) do
+            local ok, items = pcall(function() return inv:GetItems() end)
+            if ok and items then
+                for _, item in ipairs(items) do
+                    local s = item:get()
+                    if s.ItemType then
+                        local ok2, tName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                        if ok2 and isBatteryType(tName) then
+                            local cur, mx = readCharge(s)
+                            if cur and mx and mx > 0 then
+                                local dName = nil
+                                pcall(function() dName = s.ItemType.Name:ToString() end)
+                                if not dName or dName == "" then
+                                    dName = tName:gsub("^DA_", ""):gsub("_ItemType$", "")
+                                end
+                                table.insert(termBatteries, {
+                                    typeName = tName,
+                                    displayName = dName,
+                                    itemType = s.ItemType,
+                                    itemId = s.ItemId,
+                                    inventoryId = s.InventoryId,
+                                    chargePercent = cur / mx,
+                                    terminalInv = inv,
+                                    count = s.Count or 1,
+                                    used = false,
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Only iterate over the excess batteries (worst charge), not all of them.
+        -- The remaining best-charge batteries stay in inventory to meet the budget.
+        for i = 1, toStash do
+            local bat = playerBatteries[i]
+            -- Try direct stash first (terminal has space)
+            local placed = false
+            local beforeCount = #playerInv:GetItems()
+            for _, inv in ipairs(terminalInvs) do
+                pcall(function()
+                    playerInv:MoveItemBetweenInventories(bat.itemId, bat.inventoryId, inv.InventoryId)
+                end)
+                local afterCount = #playerInv:GetItems()
+                if afterCount < beforeCount then
+                    stashCount = stashCount + 1
+                    placed = true
+                    break
+                end
+            end
+            -- Terminal full: swap with highest-charge terminal battery of same type.
+            -- Pull from terminal first (frees a slot), then push player battery in.
+            if not placed then
+                local bestIdx = nil
+                local bestCharge = bat.chargePercent
+                for j, tb in ipairs(termBatteries) do
+                    if not tb.used and tb.typeName == bat.typeName and tb.chargePercent > bestCharge then
+                        bestCharge = tb.chargePercent
+                        bestIdx = j
+                    end
+                end
+                if bestIdx then
+                    local tb = termBatteries[bestIdx]
+                    -- Step 1: Pull high-charge battery from terminal to player
+                    local beforePull = #playerInv:GetItems()
+                    pcall(function()
+                        playerInv:MoveItemBetweenInventories(
+                            tb.itemId, tb.inventoryId, playerInvId)
+                    end)
+                    local afterPull = #playerInv:GetItems()
+                    if afterPull > beforePull then
+                        -- Step 2: Push low-charge battery to terminal (now has space)
+                        pcall(function()
+                            playerInv:MoveItemBetweenInventories(
+                                bat.itemId, bat.inventoryId, tb.terminalInv.InventoryId)
+                        end)
+                        local afterPush = #playerInv:GetItems()
+                        if afterPush < afterPull then
+                            stashCount = stashCount + 1
+                            tb.used = true
+                            placed = true
+                            -- Swapped-out terminal battery routes to lockers
+                            table.insert(unplaced, {
+                                typeName = tb.typeName,
+                                displayName = tb.displayName,
+                                itemType = tb.itemType,
+                                itemId = tb.itemId,
+                                inventoryId = playerInvId,
+                                count = tb.count,
+                            })
+                        else
+                            -- Push failed, return terminal battery
+                            pcall(function()
+                                playerInv:MoveItemBetweenInventories(
+                                    tb.itemId, playerInvId, tb.inventoryId)
+                            end)
+                        end
+                    end
+                end
+            end
+            if not placed then
+                table.insert(unplaced, bat)
+            end
+        end
+    end
+
+    -- Phase 2: Pull best batteries from Terminal if player needs more
+    -- Re-scan player batteries after stashing
+    local currentCount = 0
+    playerItems = playerInv:GetItems()
+    for _, item in ipairs(playerItems) do
+        local s = item:get()
+        if s.ItemType then
+            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+            if ok and isBatteryType(typeName) then
+                currentCount = currentCount + 1
+            end
+        end
+    end
+
+    if currentCount < batteryBudget then
+        local needed = batteryBudget - currentCount
+        -- Collect all terminal batteries, sort by charge (best first)
+        local termBatteries = {}
+        for _, inv in ipairs(terminalInvs) do
+            local ok, items = pcall(function() return inv:GetItems() end)
+            if ok and items then
+                for _, item in ipairs(items) do
+                    local s = item:get()
+                    if s.ItemType then
+                        local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                        if ok2 and isBatteryType(typeName) then
+                            local current, max = readCharge(s)
+                            table.insert(termBatteries, {
+                                itemId = s.ItemId,
+                                inventoryId = s.InventoryId,
+                                charge = current or 0,
+                                chargePercent = (current and max and max > 0) and (current / max) or 0,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+
+        table.sort(termBatteries, function(a, b) return a.chargePercent > b.chargePercent end)
+        local pulled = 0
+        for _, bat in ipairs(termBatteries) do
+            if pulled >= needed then break end
+            local ok = pcall(function()
+                playerInv:MoveItemBetweenInventories(bat.itemId, bat.inventoryId, playerInvId)
+            end)
+            if ok then
+                pulled = pulled + 1
+                pullCount = pullCount + 1
+            end
+        end
+    end
+
+    return stashCount, pullCount, unplaced
+end
+
+--- Route batteries from overflow lockers to Battery Terminal (used by H key)
+local function routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers)
+    local batteryBudget = config.RestockBatteryCount or 0
+    if batteryBudget <= 0 then return 0 end
+
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+    local CHARGER_CLASSES = {
+        BP_BasicBatteryTerminal_C = true,
+        BP_PowerCellTerminal_C = true,
+    }
+    local chargers = FindAllOf("UWEPowerTerminal")
+    if not chargers then return 0 end
+
+    local terminalInvs = {}
+    for _, charger in ipairs(chargers) do
+        if charger:IsValid() then
+            local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
+            if okCls and CHARGER_CLASSES[className] then
+                local dist = utils.GetDistance(pawn, charger)
+                if dist <= radiusUnits then
+                    local ok, inv = pcall(function() return charger.InventoryComponent end)
+                    if ok and inv and inv:IsValid() then
+                        table.insert(terminalInvs, inv)
+                    end
+                end
+            end
+        end
+    end
+
+    if #terminalInvs == 0 then return 0 end
+
+    local moved = 0
+    for _, overflowData in ipairs(overflowLockers) do
+        local ok, items = pcall(function() return overflowData.inventory:GetItems() end)
+        if ok and items then
+            for _, item in ipairs(items) do
+                local s = item:get()
+                if s.ItemType then
+                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
+                    if ok2 and isBatteryType(typeName) then
+                        for _, inv in ipairs(terminalInvs) do
+                            local ok3 = pcall(function()
+                                playerInv:MoveItemBetweenInventories(s.ItemId, s.InventoryId, inv.InventoryId)
+                            end)
+                            if ok3 then
+                                moved = moved + 1
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return moved
+end
+
 --- Show the appropriate notification for a quick-stack result
 local function showResultNotification(actualTransferred, numContainers, someFull, swapCount, playerInv, totalItemsBefore)
     local function buildMessage(transferred, containers, full, swaps)
@@ -667,8 +980,19 @@ local function doQuickStack()
     -- Sort overflow lockers by label for stable, predictable ordering
     table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
 
-    -- Do battery swap (runs regardless of whether there are lockers)
-    local swapCount = doBatterySwap(pawn, playerInv)
+    -- Battery handling: management (budget mode) or swap (legacy mode)
+    local swapCount = 0
+    local batteryStashCount, batteryPullCount = 0, 0
+    if (config.RestockBatteryCount or 0) > 0 then
+        local unplacedBatteries
+        batteryStashCount, batteryPullCount, unplacedBatteries = doBatteryManagement(pawn, playerInv)
+        -- Batteries that couldn't go to Terminal fall through to normal locker routing
+        for _, bat in ipairs(unplacedBatteries) do
+            table.insert(transferableItems, bat)
+        end
+    else
+        swapCount = doBatterySwap(pawn, playerInv)
+    end
 
     -- Do item stacking
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
@@ -848,9 +1172,11 @@ local function doQuickStack()
         local restockCount = 0
         for _ in pairs(restockDetails or {}) do restockCount = restockCount + 1 end
 
-        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
+        local batteryActivity = batteryStashCount + batteryPullCount
+
+        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
             utils.Notify(L("no_match"), config)
-        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 then
+        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 then
             utils.Notify(L("nothing_to_stack"), config)
         else
             local parts = {}
@@ -864,6 +1190,12 @@ local function doQuickStack()
             if swapCount > 0 then
                 table.insert(parts, L("swapped", swapCount))
             end
+            if batteryStashCount > 0 then
+                table.insert(parts, L("battery_stashed", batteryStashCount))
+            end
+            if batteryPullCount > 0 then
+                table.insert(parts, L("battery_pulled", batteryPullCount))
+            end
             if restockCount > 0 then
                 table.insert(parts, L("restocked", restockCount))
             end
@@ -875,13 +1207,14 @@ local function doQuickStack()
     end
 
     -- Nothing to do?
-    if #transferableItems == 0 and swapCount == 0 and not restockEnabled then
+    local batteryActivity = batteryStashCount + batteryPullCount
+    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and not restockEnabled then
         utils.Notify(L("nothing_to_stack"), config)
         return
     end
 
     -- If nothing to stash/swap but restock is enabled, skip straight to restock
-    if #transferableItems == 0 and swapCount == 0 and restockEnabled then
+    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled then
         local restockDetails = doRestockPass({})
         local restockCount = 0
         for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
@@ -1228,7 +1561,10 @@ local function doSortOverflow()
         ::nextOverflowLocker::
     end
 
-    if totalMoved == 0 then
+    -- Route batteries from overflow to Battery Terminal
+    local batteryRouted = routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers)
+
+    if totalMoved == 0 and batteryRouted == 0 then
         utils.Notify(L("no_overflow_sorted"), config)
         return
     end
@@ -1241,15 +1577,20 @@ local function doSortOverflow()
     local firstOverflowCount = 0
     pcall(function() firstOverflowCount = #firstOverflow.inventory:GetItems() end)
 
-    -- Show results (wait for replication if needed)
-    local msg
-    if someFull then
-        msg = L("sorted_full", totalMoved, numContainers)
-    else
-        msg = L("sorted", totalMoved, numContainers)
+    -- Show results
+    local parts = {}
+    if totalMoved > 0 then
+        if someFull then
+            parts[#parts + 1] = L("sorted_full", totalMoved, numContainers)
+        else
+            parts[#parts + 1] = L("sorted", totalMoved, numContainers)
+        end
+    end
+    if batteryRouted > 0 then
+        parts[#parts + 1] = L("battery_stashed", batteryRouted)
     end
 
-    utils.Notify(msg, config)
+    utils.Notify(table.concat(parts, " | "), config)
     showTransferSummary(transferDetails)
 end
 

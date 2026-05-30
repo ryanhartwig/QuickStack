@@ -17,6 +17,7 @@ config.LabelRouting = true
 config.KeybindOverflow = "H"
 config.KeybindRestock = ""
 config.BatterySwap = true
+config.RestockBatteryCount = 0
 config.RestockFoodCount = 2
 config.RestockDrinkCount = 2
 config.RestockHealCount = 2
@@ -90,6 +91,8 @@ local function loadConfig()
                     config.LabelRouting = (value == "true")
                 elseif key == "battery_swap" then
                     config.BatterySwap = (value == "true")
+                elseif key == "restock_battery_count" then
+                    config.RestockBatteryCount = tonumber(value) or 0
                 elseif key == "restock_food_count" then
                     config.RestockFoodCount = tonumber(value) or 2
                 elseif key == "restock_drink_count" then
@@ -117,10 +120,10 @@ local function loadConfig()
     end
 
     file:close()
-    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items, battery_swap=%s, summary_duration=%ds\n",
+    print(string.format("[QuickStack] Config loaded: keybind=%s, keybind_open=%s, radius=%d, cooldown=%.1f, notify=%s, stack_tools=%s, stack_equipment=%s, keep_types=%d items, battery_swap=%s, battery_budget=%d, summary_duration=%ds\n",
         config.Keybind, config.KeybindOpen, config.Radius, config.Cooldown,
         tostring(config.Notify), tostring(config.StackTools), tostring(config.StackEquipment),
-        #config.KeepTypes, tostring(config.BatterySwap), config.SummaryDuration))
+        #config.KeepTypes, tostring(config.BatterySwap), config.RestockBatteryCount, config.SummaryDuration))
 end
 
 loadConfig()
@@ -132,6 +135,7 @@ local settingsMap = {
     { key = "restock_food_count",  field = "RestockFoodCount",  type = "number" },
     { key = "restock_drink_count", field = "RestockDrinkCount", type = "number" },
     { key = "restock_heal_count",  field = "RestockHealCount",  type = "number" },
+    { key = "restock_battery_count", field = "RestockBatteryCount", type = "number" },
     { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
 }
