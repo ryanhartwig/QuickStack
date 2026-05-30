@@ -125,4 +125,152 @@ function utils.findNearbyTerminals(pawn, radiusUnits)
     return terminals
 end
 
+--- Read the user-set label from a locker's UGCComponent
+function utils.getLockerLabel(actor)
+    local ok, ugc = pcall(function() return actor.UGCComponent end)
+    if not ok or not ugc then return nil end
+    local ok1b, valid = pcall(function() return ugc:IsValid() end)
+    if not ok1b or not valid then return nil end
+
+    local ok2, hasUGC = pcall(function() return ugc:HasUserGeneratedContent() end)
+    if not ok2 or not hasUGC then return nil end
+
+    local ok3, texts = pcall(function() return ugc.PlayerTexts end)
+    if not ok3 or not texts then return nil end
+
+    local ok4, len = pcall(function() return #texts end)
+    if not ok4 or not len or len == 0 then return nil end
+
+    for i = 1, len do
+        local str = nil
+        pcall(function()
+            local entry = texts[i]
+            if entry then
+                local val = entry.Value
+                if val then
+                    local s = nil
+                    local ok_ts, ts = pcall(function() return val:ToString() end)
+                    if ok_ts and ts and type(ts) == "string" then s = ts end
+                    if not s then
+                        local ok_get, g = pcall(function() return val:get() end)
+                        if ok_get and g and type(g) == "string" then s = g end
+                    end
+                    if not s then
+                        local raw = tostring(val)
+                        if raw and not raw:match("^FString:") and raw ~= "" and raw ~= "nil" then s = raw end
+                    end
+                    if s and s ~= "" then str = s end
+                end
+            end
+        end)
+        if str then return str end
+    end
+    return nil
+end
+
+--- Whitelisted container classes for scanning
+utils.CONTAINER_SOURCES = {
+    { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
+    { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
+}
+
+--- Discover nearby containers, categorized by label prefix.
+--- Returns lockers, overflowLockers, excludedLockerInvs
+--- lockers: { inventory, inventoryId, label } -- normal routing targets
+--- overflowLockers: { inventory, inventoryId, label } -- overflow dump targets
+--- excludedLockerInvs: { inv } -- excluded containers (still used for restock candidate scanning)
+function utils.discoverNearbyContainers(pawn, radiusUnits, cfg)
+    local lockers = {}
+    local overflowLockers = {}
+    local excludedLockerInvs = {}
+
+    for _, source in ipairs(utils.CONTAINER_SOURCES) do
+        local actors = FindAllOf(source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor:IsValid() then
+                    local dist = utils.GetDistance(pawn, actor)
+                    if dist <= radiusUnits then
+                        local ok, inv = pcall(function() return source.getInv(actor) end)
+                        if ok and inv and inv:IsValid() then
+                            local rawLabel = nil
+                            if source.hasLabel then
+                                local ok2, lbl = pcall(function() return utils.getLockerLabel(actor) end)
+                                if ok2 then rawLabel = lbl end
+                            end
+
+                            -- Exclusion prefix
+                            if rawLabel and cfg.ExcludePrefix ~= "" then
+                                if rawLabel:sub(1, #cfg.ExcludePrefix) == cfg.ExcludePrefix then
+                                    table.insert(excludedLockerInvs, inv)
+                                    goto nextActor
+                                end
+                            end
+
+                            -- Overflow prefix
+                            if rawLabel and cfg.OverflowPrefix ~= "" then
+                                if rawLabel:sub(1, #cfg.OverflowPrefix) == cfg.OverflowPrefix then
+                                    table.insert(overflowLockers, {
+                                        inventory = inv,
+                                        inventoryId = inv.InventoryId,
+                                        label = rawLabel,
+                                    })
+                                    goto nextActor
+                                end
+                            end
+
+                            -- Parse routing label
+                            local label = nil
+                            if rawLabel and cfg.LabelRouting then
+                                if cfg.LabelPrefix == "" then
+                                    label = rawLabel
+                                else
+                                    local prefixLen = #cfg.LabelPrefix
+                                    if rawLabel:sub(1, prefixLen) == cfg.LabelPrefix then
+                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
+                                        if label == "" then label = nil end
+                                    end
+                                end
+                            end
+                            table.insert(lockers, {
+                                inventory = inv,
+                                inventoryId = inv.InventoryId,
+                                label = label,
+                            })
+                        end
+                    end
+                    ::nextActor::
+                end
+            end
+        end
+    end
+
+    -- Stable overflow ordering
+    table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
+
+    return lockers, overflowLockers, excludedLockerInvs
+end
+
+--- Find all nearby container inventories (no label parsing). For restock-only scanning.
+function utils.findAllNearbyInvs(pawn, radiusUnits)
+    local invs = {}
+    for _, source in ipairs(utils.CONTAINER_SOURCES) do
+        local actors = FindAllOf(source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor:IsValid() then
+                    local dist = utils.GetDistance(pawn, actor)
+                    if dist <= radiusUnits then
+                        local ok, inv = pcall(function() return source.getInv(actor) end)
+                        if ok and inv and inv:IsValid() then
+                            table.insert(invs, inv)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return invs
+end
+
 return utils

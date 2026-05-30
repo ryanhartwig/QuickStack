@@ -173,49 +173,6 @@ local showTransferSummary = ui.showTransferSummary
 local DEFAULT_MAX_ITEMS = 30
 local BATTERY_FULL_THRESHOLD = 0.99
 
---- Read the user-set label from a locker's UGCComponent
-local function getLockerLabel(actor)
-    local ok, ugc = pcall(function() return actor.UGCComponent end)
-    if not ok or not ugc then return nil end
-    local ok1b, valid = pcall(function() return ugc:IsValid() end)
-    if not ok1b or not valid then return nil end
-
-    local ok2, hasUGC = pcall(function() return ugc:HasUserGeneratedContent() end)
-    if not ok2 or not hasUGC then return nil end
-
-    local ok3, texts = pcall(function() return ugc.PlayerTexts end)
-    if not ok3 or not texts then return nil end
-
-    local ok4, len = pcall(function() return #texts end)
-    if not ok4 or not len or len == 0 then return nil end
-
-    for i = 1, len do
-        local str = nil
-        pcall(function()
-            local entry = texts[i]
-            if entry then
-                local val = entry.Value
-                if val then
-                    local s = nil
-                    local ok_ts, ts = pcall(function() return val:ToString() end)
-                    if ok_ts and ts and type(ts) == "string" then s = ts end
-                    if not s then
-                        local ok_get, g = pcall(function() return val:get() end)
-                        if ok_get and g and type(g) == "string" then s = g end
-                    end
-                    if not s then
-                        local raw = tostring(val)
-                        if raw and not raw:match("^FString:") and raw ~= "" and raw ~= "nil" then s = raw end
-                    end
-                    if s and s ~= "" then str = s end
-                end
-            end
-        end)
-        if str then return str end
-    end
-    return nil
-end
-
 --- Get the inventory component of the currently open container
 local function getOpenContainerInventory()
     local tabs = FindAllOf("WBP_TabInventory_C")
@@ -855,81 +812,8 @@ local function doQuickStack()
 
     local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
 
-    -- Whitelisted container classes
-    local containerSources = {
-        { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
-        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
-    }
-
-    local playerLoc = pawn:K2_GetActorLocation()
     local radiusUnits = utils.MetersToUnits(config.Radius)
-    local nearbyLockers = {}
-    local overflowLockers = {}
-    local excludedLockerInvs = {}  -- for restock: %x lockers still have food/water
-
-    for _, source in ipairs(containerSources) do
-        local actors = FindAllOf(source.class)
-        if actors then
-            for _, actor in ipairs(actors) do
-                if actor:IsValid() then
-                    local dist = utils.GetDistance(pawn, actor)
-                    if dist <= radiusUnits then
-                        local ok, inv = pcall(function() return source.getInv(actor) end)
-                        if ok and inv and inv:IsValid() then
-                            -- Read label if this container type supports it
-                            local rawLabel = nil
-                            if source.hasLabel then
-                                local ok2, lbl = pcall(function() return getLockerLabel(actor) end)
-                                if ok2 then rawLabel = lbl end
-                            end
-
-                            -- Check exclusion prefix — skip this container for stacking
-                            if rawLabel and config.ExcludePrefix ~= "" then
-                                if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
-                                    table.insert(excludedLockerInvs, inv)
-                                    goto nextActor
-                                end
-                            end
-
-                            -- Check overflow prefix — collect separately
-                            if rawLabel and config.OverflowPrefix ~= "" then
-                                if rawLabel:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
-                                    table.insert(overflowLockers, {
-                                        inventory = inv,
-                                        inventoryId = inv.InventoryId,
-                                        label = rawLabel,
-                                    })
-                                    goto nextActor
-                                end
-                            end
-
-                            local label = nil
-                            if rawLabel and config.LabelRouting then
-                                if config.LabelPrefix == "" then
-                                    label = rawLabel
-                                else
-                                    local prefixLen = #config.LabelPrefix
-                                    if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
-                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
-                                        if label == "" then label = nil end
-                                    end
-                                end
-                            end
-                            table.insert(nearbyLockers, {
-                                inventory = inv,
-                                inventoryId = inv.InventoryId,
-                                label = label,
-                            })
-                        end
-                    end
-                    ::nextActor::
-                end
-            end
-        end
-    end
-
-    -- Sort overflow lockers by label for stable, predictable ordering
-    table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
+    local nearbyLockers, overflowLockers, excludedLockerInvs = utils.discoverNearbyContainers(pawn, radiusUnits, config)
 
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
     local swapCount = doBatterySwap(pawn, playerInv)
@@ -1300,79 +1184,8 @@ local function doSortOverflow()
     local playerInv = pawn.InventoryComponent
     if not playerInv or not playerInv:IsValid() then return end
 
-    -- Whitelisted container classes
-    local containerSources = {
-        { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
-        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
-    }
-
     local radiusUnits = utils.MetersToUnits(config.Radius)
-    local overflowLockers = {}
-    local targetLockers = {}
-
-    -- Scan for overflow and target lockers
-    for _, source in ipairs(containerSources) do
-        local actors = FindAllOf(source.class)
-        if actors then
-            for _, actor in ipairs(actors) do
-                if actor:IsValid() then
-                    local dist = utils.GetDistance(pawn, actor)
-                    if dist <= radiusUnits then
-                        local ok, inv = pcall(function() return source.getInv(actor) end)
-                        if ok and inv and inv:IsValid() then
-                            local rawLabel = nil
-                            if source.hasLabel then
-                                local ok2, lbl = pcall(function() return getLockerLabel(actor) end)
-                                if ok2 then rawLabel = lbl end
-                            end
-
-                            -- Skip excluded
-                            if rawLabel and config.ExcludePrefix ~= "" then
-                                if rawLabel:sub(1, #config.ExcludePrefix) == config.ExcludePrefix then
-                                    goto nextOverflowActor
-                                end
-                            end
-
-                            -- Collect overflow lockers as sources
-                            if rawLabel and config.OverflowPrefix ~= "" then
-                                if rawLabel:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
-                                    table.insert(overflowLockers, {
-                                        inventory = inv,
-                                        inventoryId = inv.InventoryId,
-                                        label = rawLabel,
-                                    })
-                                    goto nextOverflowActor
-                                end
-                            end
-
-                            -- Everything else is a target
-                            local label = nil
-                            if rawLabel and config.LabelRouting then
-                                if config.LabelPrefix == "" then
-                                    label = rawLabel
-                                else
-                                    local prefixLen = #config.LabelPrefix
-                                    if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
-                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
-                                        if label == "" then label = nil end
-                                    end
-                                end
-                            end
-                            table.insert(targetLockers, {
-                                inventory = inv,
-                                inventoryId = inv.InventoryId,
-                                label = label,
-                            })
-                        end
-                    end
-                    ::nextOverflowActor::
-                end
-            end
-        end
-    end
-
-    -- Sort overflow lockers by label for stable processing order
-    table.sort(overflowLockers, function(a, b) return (a.label or "") < (b.label or "") end)
+    local targetLockers, overflowLockers = utils.discoverNearbyContainers(pawn, radiusUnits, config)
 
     if #overflowLockers == 0 then
         utils.Notify(L("no_overflow"), config)
@@ -1538,31 +1351,8 @@ local function doRestockOnly()
         return
     end
 
-    -- Scan nearby containers for restock candidates
-    local containerSources = {
-        { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
-        { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
-    }
-
     local radiusUnits = utils.MetersToUnits(config.Radius)
-    local allLockerInvs = {}
-
-    for _, source in ipairs(containerSources) do
-        local actors = FindAllOf(source.class)
-        if actors then
-            for _, actor in ipairs(actors) do
-                if actor:IsValid() then
-                    local dist = utils.GetDistance(pawn, actor)
-                    if dist <= radiusUnits then
-                        local ok, inv = pcall(function() return source.getInv(actor) end)
-                        if ok and inv and inv:IsValid() then
-                            table.insert(allLockerInvs, inv)
-                        end
-                    end
-                end
-            end
-        end
-    end
+    local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
 
     if #allLockerInvs == 0 then
         utils.Notify(L("no_match"), config)
