@@ -372,9 +372,10 @@ local function doQuickStack()
     -- sees the post-management inventory and correctly marks remaining excess as transferable.
     -- Only runs on quickstack key if restock is not split to a separate keybind.
     local batteryStashCount, batteryPullCount = 0, 0
+    local batteryDetails = {}
     local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
     if anyBatteryBudget and restockWithQuickstack then
-        batteryStashCount, batteryPullCount = battery.doBatteryManagement(pawn, playerInv)
+        batteryStashCount, batteryPullCount, _, batteryDetails = battery.doBatteryManagement(pawn, playerInv)
     end
 
     local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
@@ -401,6 +402,18 @@ local function doQuickStack()
         for _, data in ipairs(overflowLockers) do table.insert(allLockerInvs, data.inventory) end
         for _, inv in ipairs(excludedLockerInvs) do table.insert(allLockerInvs, inv) end
         restockCandidates = restock.buildCandidates(allLockerInvs)
+    end
+
+    -- Merge battery details into restock details for the summary panel
+    local function mergeDetails(target, source)
+        for k, v in pairs(source) do
+            if not target[k] then
+                target[k] = v
+            else
+                target[k].count = target[k].count + v.count
+                for label in pairs(v.containers) do target[k].containers[label] = true end
+            end
+        end
     end
 
     -- Function to show results (called after all passes complete)
@@ -438,6 +451,7 @@ local function doQuickStack()
             if #parts > 0 then
                 utils.Notify(table.concat(parts, " | "), config)
             end
+            mergeDetails(restockDetails, batteryDetails)
             showTransferSummary(transferDetails, overflowDetails, restockDetails)
         end
     end
@@ -452,6 +466,7 @@ local function doQuickStack()
     -- If nothing to stash/swap but restock is enabled, skip straight to restock
     if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled then
         local restockDetails = restock.execute(playerInv, restockCandidates)
+        mergeDetails(restockDetails, batteryDetails)
         local restockCount = 0
         for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
         if restockCount > 0 then
@@ -729,8 +744,9 @@ local function doRestockOnly()
 
     -- Battery management (budget-based terminal stash/swap/pull)
     local batteryStashCount, batteryPullCount = 0, 0
+    local batteryDetails = {}
     if anyBatteryBudget then
-        batteryStashCount, batteryPullCount = battery.doBatteryManagement(pawn, playerInv)
+        batteryStashCount, batteryPullCount, _, batteryDetails = battery.doBatteryManagement(pawn, playerInv)
     end
 
     -- Consumable restock
@@ -767,6 +783,15 @@ local function doRestockOnly()
         table.insert(parts, L("restocked", restockCount))
     end
     utils.Notify(table.concat(parts, " | "), config)
+    -- Merge battery details into restock for summary panel
+    for k, v in pairs(batteryDetails) do
+        if not restockDetails[k] then
+            restockDetails[k] = v
+        else
+            restockDetails[k].count = restockDetails[k].count + v.count
+            for label in pairs(v.containers) do restockDetails[k].containers[label] = true end
+        end
+    end
     showTransferSummary({}, {}, restockDetails)
 end
 

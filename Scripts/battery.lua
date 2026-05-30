@@ -35,22 +35,16 @@ function battery.doBatterySwap(pawn, playerInv)
         local s = item:get()
         local typeName = readItemTypeName(s)
         if typeName and isBatteryType(typeName) then
-            -- Skip types managed by battery/power cell budget
-            local isPC = isPowerCellType(typeName)
-            local managed = isPC and (config.RestockPowerCellCount or 0) > 0
-                or not isPC and (config.RestockBatteryCount or 0) > 0
-            if not managed then
-                local current, max = readCharge(s)
-                if current and max and max > 0 then
-                    table.insert(playerBatteries, {
-                        typeName = typeName,
-                        itemId = s.ItemId,
-                        inventoryId = s.InventoryId,
-                        charge = current,
-                        maxCharge = max,
-                        chargePercent = current / max,
-                    })
-                end
+            local current, max = readCharge(s)
+            if current and max and max > 0 then
+                table.insert(playerBatteries, {
+                    typeName = typeName,
+                    itemId = s.ItemId,
+                    inventoryId = s.InventoryId,
+                    charge = current,
+                    maxCharge = max,
+                    chargePercent = current / max,
+                })
             end
         end
     end
@@ -142,11 +136,11 @@ end
 
 --- Battery management: stash excess batteries/power cells to matching Terminal, pull to fill budget
 --- Processes batteries and power cells independently with separate budgets.
---- Returns stashCount, pullCount, unplacedBatteries (items that couldn't go to Terminal)
+--- Returns stashCount, pullCount, unplacedBatteries, batteryDetails (for summary panel)
 function battery.doBatteryManagement(pawn, playerInv)
     local batteryBudget = config.RestockBatteryCount or 0
     local powerCellBudget = config.RestockPowerCellCount or 0
-    if batteryBudget <= 0 and powerCellBudget <= 0 then return 0, 0, {} end
+    if batteryBudget <= 0 and powerCellBudget <= 0 then return 0, 0, {}, {} end  -- stash, pull, unplaced, details
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
     local terminalInvs = utils.findNearbyTerminals(pawn, radiusUnits)
@@ -154,6 +148,7 @@ function battery.doBatteryManagement(pawn, playerInv)
     local playerInvId = playerInv.InventoryId
     local stashCount = 0
     local pullCount = 0
+    local batteryDetails = {}  -- for summary panel
 
     -- Scan player inventory for all battery-type items
     local playerBats = {}
@@ -241,6 +236,7 @@ function battery.doBatteryManagement(pawn, playerInv)
                         local afterCount = #playerInv:GetItems()
                         if afterCount < beforeCount then
                             stashCount = stashCount + 1
+                            utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
                             placed = true
                             break
                         end
@@ -273,6 +269,7 @@ function battery.doBatteryManagement(pawn, playerInv)
                             local afterPush = #playerInv:GetItems()
                             if afterPush < afterPull then
                                 stashCount = stashCount + 1
+                                utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
                                 tb.used = true
                                 placed = true
                                 table.insert(unplaced, {
@@ -321,14 +318,11 @@ function battery.doBatteryManagement(pawn, playerInv)
                     if ok and items then
                         for _, item in ipairs(items) do
                             local s = item:get()
-                            local typeName = readItemTypeName(s)
-                            if typeName and isBatteryType(typeName) then
+                            local info = readItemInfo(s)
+                            if info and isBatteryType(info.typeName) then
                                 local current, max = readCharge(s)
-                                table.insert(pullCandidates, {
-                                    itemId = s.ItemId,
-                                    inventoryId = s.InventoryId,
-                                    chargePercent = (current and max and max > 0) and (current / max) or 0,
-                                })
+                                info.chargePercent = (current and max and max > 0) and (current / max) or 0
+                                table.insert(pullCandidates, info)
                             end
                         end
                     end
@@ -345,12 +339,13 @@ function battery.doBatteryManagement(pawn, playerInv)
                 if ok then
                     pulled = pulled + 1
                     pullCount = pullCount + 1
+                    utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
                 end
             end
         end
     end
 
-    return stashCount, pullCount, unplaced
+    return stashCount, pullCount, unplaced, batteryDetails
 end
 
 --- Route batteries from overflow lockers to Battery Terminal (used by H key)
