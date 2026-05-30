@@ -35,16 +35,22 @@ function battery.doBatterySwap(pawn, playerInv)
         local s = item:get()
         local typeName = readItemTypeName(s)
         if typeName and isBatteryType(typeName) then
-            local current, max = readCharge(s)
-            if current and max and max > 0 then
-                table.insert(playerBatteries, {
-                    typeName = typeName,
-                    itemId = s.ItemId,
-                    inventoryId = s.InventoryId,
-                    charge = current,
-                    maxCharge = max,
-                    chargePercent = current / max,
-                })
+            -- Skip types managed by budget (those are handled by doBatteryManagement)
+            local isPC = isPowerCellType(typeName)
+            local managed = isPC and (config.RestockPowerCellCount or 0) > 0
+                or not isPC and (config.RestockBatteryCount or 0) > 0
+            if not managed then
+                local current, max = readCharge(s)
+                if current and max and max > 0 then
+                    table.insert(playerBatteries, {
+                        typeName = typeName,
+                        itemId = s.ItemId,
+                        inventoryId = s.InventoryId,
+                        charge = current,
+                        maxCharge = max,
+                        chargePercent = current / max,
+                    })
+                end
             end
         end
     end
@@ -348,8 +354,9 @@ function battery.doBatteryManagement(pawn, playerInv)
     return stashCount, pullCount, unplaced, batteryDetails
 end
 
---- Route batteries from overflow lockers to Battery Terminal (used by H key)
---- Returns moved count and a set of ItemIds that were routed (so caller can skip them)
+--- Route batteries from overflow lockers to Battery Terminal (used by H key).
+--- Simple direct moves — if terminal is full, batteries stay in overflow for normal locker routing.
+--- Returns moved count and a set of ItemIds that were routed (so caller can skip them).
 function battery.routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers)
     local anyBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
     if not anyBudget then return 0, {} end
@@ -359,7 +366,7 @@ function battery.routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLocke
     if #terminalInvs == 0 then return 0, {} end
 
     local moved = 0
-    local movedItemIds = {}  -- track which items were routed to terminals
+    local movedItemIds = {}
     for _, overflowData in ipairs(overflowLockers) do
         local ok, items = pcall(function() return overflowData.inventory:GetItems() end)
         if ok and items then
@@ -368,22 +375,17 @@ function battery.routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLocke
                 local typeName = readItemTypeName(s)
                 if typeName and isBatteryType(typeName) then
                     local isPC = isPowerCellType(typeName)
-                    -- Only route types that have a budget
-                    local hasBudget = isPC and (config.RestockPowerCellCount or 0) > 0
-                        or not isPC and (config.RestockBatteryCount or 0) > 0
-                    if hasBudget then
-                        for _, term in ipairs(terminalInvs) do
-                            if term.forPowerCell == isPC then
-                                local beforeCount = #overflowData.inventory:GetItems()
-                                pcall(function()
-                                    playerInv:MoveItemBetweenInventories(s.ItemId, s.InventoryId, term.inv.InventoryId)
-                                end)
-                                local afterCount = #overflowData.inventory:GetItems()
-                                if afterCount < beforeCount then
-                                    moved = moved + 1
-                                    movedItemIds[s.ItemId] = true
-                                    break
-                                end
+                    for _, term in ipairs(terminalInvs) do
+                        if term.forPowerCell == isPC then
+                            local beforeCount = #overflowData.inventory:GetItems()
+                            pcall(function()
+                                playerInv:MoveItemBetweenInventories(s.ItemId, s.InventoryId, term.inv.InventoryId)
+                            end)
+                            local afterCount = #overflowData.inventory:GetItems()
+                            if afterCount < beforeCount then
+                                moved = moved + 1
+                                movedItemIds[s.ItemId] = true
+                                break
                             end
                         end
                     end

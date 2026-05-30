@@ -368,13 +368,12 @@ local function doQuickStack()
         return
     end
 
-    -- Battery management runs first (terminal stash/swap/pull) so getTransferableItems
-    -- sees the post-management inventory and correctly marks remaining excess as transferable.
-    -- Only runs on quickstack key if restock is not split to a separate keybind.
+    -- Battery management always runs on quickstack (N key), not tied to restock keybind.
+    -- Runs first so getTransferableItems sees the post-management inventory.
     local batteryStashCount, batteryPullCount = 0, 0
     local batteryDetails = {}
     local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
-    if anyBatteryBudget and restockWithQuickstack then
+    if anyBatteryBudget then
         batteryStashCount, batteryPullCount, _, batteryDetails = battery.doBatteryManagement(pawn, playerInv)
     end
 
@@ -735,64 +734,33 @@ local function doRestockOnly()
         utils.Notify(L("no_inventory"), config)
         return
     end
-
-    local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
-    if not restock.isEnabled() and not anyBatteryBudget then
+    if not restock.isEnabled() then
         utils.Notify(L("nothing_to_restock"), config)
         return
     end
 
-    -- Battery management (budget-based terminal stash/swap/pull)
-    local batteryStashCount, batteryPullCount = 0, 0
-    local batteryDetails = {}
-    if anyBatteryBudget then
-        batteryStashCount, batteryPullCount, _, batteryDetails = battery.doBatteryManagement(pawn, playerInv)
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+    local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
+    if #allLockerInvs == 0 then
+        utils.Notify(L("no_match"), config)
+        return
     end
 
-    -- Consumable restock
-    local restockDetails = {}
-    if restock.isEnabled() then
-        local radiusUnits = utils.MetersToUnits(config.Radius)
-        local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
-        if #allLockerInvs > 0 then
-            local candidates = restock.buildCandidates(allLockerInvs)
-            if #candidates > 0 then
-                restockDetails = restock.execute(playerInv, candidates)
-            end
-        end
+    local candidates = restock.buildCandidates(allLockerInvs)
+    if #candidates == 0 then
+        utils.Notify(L("nothing_to_restock"), config)
+        return
     end
 
-    -- Show results
+    local restockDetails = restock.execute(playerInv, candidates)
     local restockCount = 0
     for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
-    local batteryActivity = batteryStashCount + batteryPullCount
-
-    if restockCount == 0 and batteryActivity == 0 then
-        utils.Notify(L("nothing_to_restock"), config)
-        return
-    end
-
-    local parts = {}
-    if batteryStashCount > 0 then
-        table.insert(parts, L("battery_stashed", batteryStashCount))
-    end
-    if batteryPullCount > 0 then
-        table.insert(parts, L("battery_pulled", batteryPullCount))
-    end
     if restockCount > 0 then
-        table.insert(parts, L("restocked", restockCount))
+        utils.Notify(L("restocked", restockCount), config)
+        showTransferSummary({}, {}, restockDetails)
+    else
+        utils.Notify(L("nothing_to_restock"), config)
     end
-    utils.Notify(table.concat(parts, " | "), config)
-    -- Merge battery details into restock for summary panel
-    for k, v in pairs(batteryDetails) do
-        if not restockDetails[k] then
-            restockDetails[k] = v
-        else
-            restockDetails[k].count = restockDetails[k].count + v.count
-            for label in pairs(v.containers) do restockDetails[k].containers[label] = true end
-        end
-    end
-    showTransferSummary({}, {}, restockDetails)
 end
 
 --- Check if any text input field has keyboard focus
