@@ -60,6 +60,7 @@ battery_swap=true
 # When > 0: keep N highest-charged batteries, route rest to Battery Terminal > overflow
 # Also pulls best batteries from Battery Terminal if you have fewer than budget
 restock_battery_count=0
+restock_powercell_count=0
 
 # ── Notifications & Summary Panel ──
 

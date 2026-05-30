@@ -80,6 +80,10 @@ function categories.isBatteryType(typeName)
     return false
 end
 
+function categories.isPowerCellType(typeName)
+    return string.find(string.lower(typeName), "powercell", 1, true) ~= nil
+end
+
 function categories.isFoodType(typeName)
     local lname = string.lower(typeName)
     for _, pattern in ipairs(FOOD_PATTERNS) do

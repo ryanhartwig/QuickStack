@@ -18,6 +18,7 @@ config.KeybindOverflow = "H"
 config.KeybindRestock = ""
 config.BatterySwap = true
 config.RestockBatteryCount = 0
+config.RestockPowerCellCount = 0
 config.RestockFoodCount = 2
 config.RestockDrinkCount = 2
 config.RestockHealCount = 2
@@ -93,6 +94,8 @@ local function loadConfig()
                     config.BatterySwap = (value == "true")
                 elseif key == "restock_battery_count" then
                     config.RestockBatteryCount = tonumber(value) or 0
+                elseif key == "restock_powercell_count" then
+                    config.RestockPowerCellCount = tonumber(value) or 0
                 elseif key == "restock_food_count" then
                     config.RestockFoodCount = tonumber(value) or 2
                 elseif key == "restock_drink_count" then
@@ -136,6 +139,7 @@ local settingsMap = {
     { key = "restock_drink_count", field = "RestockDrinkCount", type = "number" },
     { key = "restock_heal_count",  field = "RestockHealCount",  type = "number" },
     { key = "restock_battery_count", field = "RestockBatteryCount", type = "number" },
+    { key = "restock_powercell_count", field = "RestockPowerCellCount", type = "number" },
     { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
 }
