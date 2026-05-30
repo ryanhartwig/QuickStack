@@ -163,6 +163,8 @@ local isBatteryType = categories.isBatteryType
 local isPowerCellType = categories.isPowerCellType
 local readCharge = categories.readCharge
 local shouldKeepItem = categories.shouldKeepItem
+local readItemInfo = utils.readItemInfo
+local readItemTypeName = utils.readItemTypeName
 local scoreLockerMatch = matching.scoreLockerMatch
 local waitForReplication = ui.waitForReplication
 local showTransferSummary = ui.showTransferSummary
@@ -247,43 +249,22 @@ local function getTransferableItems(playerInv)
 
     for _, playerItem in ipairs(items) do
         local s = playerItem:get()
-        if s.ItemType then
-            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-            if ok then
-                local ok2, fullName = pcall(function() return s.ItemType:GetFullName() end)
-                local fName = ok2 and fullName or ""
-
-                local displayName = nil
-                pcall(function() displayName = s.ItemType.Name:ToString() end)
-                if not displayName or displayName == "" then
-                    displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
-                end
-
-                local itemData = {
-                    typeName = typeName,
-                    displayName = displayName,
-                    fullName = fName,
-                    itemId = s.ItemId,
-                    inventoryId = s.InventoryId,
-                    itemType = s.ItemType,
-                    count = s.Count or 1,
-                }
-
-                if not shouldKeepItem(typeName, fName) then
-                    table.insert(transferable, itemData)
-                else
-                    -- Track consumables for budget trimming
-                    local cat = categories.getConsumableCategory(typeName)
-                    if cat then
-                        itemData.category = cat
-                        itemData.priority = categories.getPriority(typeName, cat)
-                        table.insert(heldConsumables, itemData)
-                    elseif isBatteryType(typeName) then
-                        local current, max = readCharge(s)
-                        if current and max and max > 0 then
-                            itemData.chargePercent = current / max
-                            table.insert(heldBatteries, itemData)
-                        end
+        local itemData = readItemInfo(s)
+        if itemData then
+            if not shouldKeepItem(itemData.typeName, itemData.fullName) then
+                table.insert(transferable, itemData)
+            else
+                -- Track consumables for budget trimming
+                local cat = categories.getConsumableCategory(itemData.typeName)
+                if cat then
+                    itemData.category = cat
+                    itemData.priority = categories.getPriority(itemData.typeName, cat)
+                    table.insert(heldConsumables, itemData)
+                elseif isBatteryType(itemData.typeName) then
+                    local current, max = readCharge(s)
+                    if current and max and max > 0 then
+                        itemData.chargePercent = current / max
+                        table.insert(heldBatteries, itemData)
                     end
                 end
             end
@@ -364,11 +345,9 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
             lockerItemCount[i] = #lockerItems
             for _, item in ipairs(lockerItems) do
                 local s = item:get()
-                if s.ItemType then
-                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                    if ok2 then
-                        lockerTypeData[i][typeName] = (lockerTypeData[i][typeName] or 0) + (s.Count or 1)
-                    end
+                local typeName = readItemTypeName(s)
+                if typeName then
+                    lockerTypeData[i][typeName] = (lockerTypeData[i][typeName] or 0) + (s.Count or 1)
                 end
             end
         end
@@ -494,25 +473,23 @@ local function doBatterySwap(pawn, playerInv)
     local playerBatteries = {}
     for _, item in ipairs(playerItems) do
         local s = item:get()
-        if s.ItemType then
-            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-            if ok and isBatteryType(typeName) then
-                -- Skip types managed by battery/power cell budget
-                local isPC = isPowerCellType(typeName)
-                local managed = isPC and (config.RestockPowerCellCount or 0) > 0
-                    or not isPC and (config.RestockBatteryCount or 0) > 0
-                if not managed then
-                    local current, max = readCharge(s)
-                    if current and max and max > 0 then
-                        table.insert(playerBatteries, {
-                            typeName = typeName,
-                            itemId = s.ItemId,
-                            inventoryId = s.InventoryId,
-                            charge = current,
-                            maxCharge = max,
-                            chargePercent = current / max,
-                        })
-                    end
+        local typeName = readItemTypeName(s)
+        if typeName and isBatteryType(typeName) then
+            -- Skip types managed by battery/power cell budget
+            local isPC = isPowerCellType(typeName)
+            local managed = isPC and (config.RestockPowerCellCount or 0) > 0
+                or not isPC and (config.RestockBatteryCount or 0) > 0
+            if not managed then
+                local current, max = readCharge(s)
+                if current and max and max > 0 then
+                    table.insert(playerBatteries, {
+                        typeName = typeName,
+                        itemId = s.ItemId,
+                        inventoryId = s.InventoryId,
+                        charge = current,
+                        maxCharge = max,
+                        chargePercent = current / max,
+                    })
                 end
             end
         end
@@ -527,20 +504,18 @@ local function doBatterySwap(pawn, playerInv)
         if ok and chargerItems then
             for _, cItem in ipairs(chargerItems) do
                 local cs = cItem:get()
-                if cs.ItemType then
-                    local ok2, cTypeName = pcall(function() return cs.ItemType:GetFName():ToString() end)
-                    if ok2 and isBatteryType(cTypeName) then
-                        local cCurrent, cMax = readCharge(cs)
-                        if cCurrent and cMax then
-                            table.insert(chargerBatteries, {
-                                typeName = cTypeName,
-                                charge = cCurrent,
-                                itemId = cs.ItemId,
-                                inventoryId = cs.InventoryId,
-                                chargerInv = chargerInv,
-                                used = false,
-                            })
-                        end
+                local cTypeName = readItemTypeName(cs)
+                if cTypeName and isBatteryType(cTypeName) then
+                    local cCurrent, cMax = readCharge(cs)
+                    if cCurrent and cMax then
+                        table.insert(chargerBatteries, {
+                            typeName = cTypeName,
+                            charge = cCurrent,
+                            itemId = cs.ItemId,
+                            inventoryId = cs.InventoryId,
+                            chargerInv = chargerInv,
+                            used = false,
+                        })
                     end
                 end
             end
@@ -652,31 +627,16 @@ local function doBatteryManagement(pawn, playerInv)
     local playerItems = playerInv:GetItems()
     for _, item in ipairs(playerItems) do
         local s = item:get()
-        if s.ItemType then
-            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-            if ok and isBatteryType(typeName) then
-                local current, max = readCharge(s)
-                if current and max and max > 0 then
-                    local displayName = nil
-                    pcall(function() displayName = s.ItemType.Name:ToString() end)
-                    if not displayName or displayName == "" then
-                        displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
-                    end
-                    local entry = {
-                        typeName = typeName,
-                        displayName = displayName,
-                        itemType = s.ItemType,
-                        itemId = s.ItemId,
-                        inventoryId = s.InventoryId,
-                        charge = current,
-                        chargePercent = current / max,
-                        count = s.Count or 1,
-                    }
-                    if isPowerCellType(typeName) then
-                        table.insert(playerPCs, entry)
-                    else
-                        table.insert(playerBats, entry)
-                    end
+        local info = readItemInfo(s)
+        if info and isBatteryType(info.typeName) then
+            local current, max = readCharge(s)
+            if current and max and max > 0 then
+                info.charge = current
+                info.chargePercent = current / max
+                if isPowerCellType(info.typeName) then
+                    table.insert(playerPCs, info)
+                else
+                    table.insert(playerBats, info)
                 end
             end
         end
@@ -713,29 +673,15 @@ local function doBatteryManagement(pawn, playerInv)
         if ok and items then
             for _, item in ipairs(items) do
                 local s = item:get()
-                if s.ItemType then
-                    local ok2, tName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                    if ok2 and isBatteryType(tName) then
-                        local cur, mx = readCharge(s)
-                        if cur and mx and mx > 0 then
-                            local dName = nil
-                            pcall(function() dName = s.ItemType.Name:ToString() end)
-                            if not dName or dName == "" then
-                                dName = tName:gsub("^DA_", ""):gsub("_ItemType$", "")
-                            end
-                            table.insert(termBatteries, {
-                                typeName = tName,
-                                displayName = dName,
-                                itemType = s.ItemType,
-                                itemId = s.ItemId,
-                                inventoryId = s.InventoryId,
-                                chargePercent = cur / mx,
-                                terminalInv = term.inv,
-                                forPowerCell = term.forPowerCell,
-                                count = s.Count or 1,
-                                used = false,
-                            })
-                        end
+                local info = readItemInfo(s)
+                if info and isBatteryType(info.typeName) then
+                    local cur, mx = readCharge(s)
+                    if cur and mx and mx > 0 then
+                        info.chargePercent = cur / mx
+                        info.terminalInv = term.inv
+                        info.forPowerCell = term.forPowerCell
+                        info.used = false
+                        table.insert(termBatteries, info)
                     end
                 end
             end
@@ -826,11 +772,9 @@ local function doBatteryManagement(pawn, playerInv)
         local currentCount = 0
         for _, item in ipairs(playerItems) do
             local s = item:get()
-            if s.ItemType then
-                local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                if ok and isBatteryType(typeName) and (isPowerCellType(typeName) == group.isPowerCell) then
-                    currentCount = currentCount + 1
-                end
+            local typeName = readItemTypeName(s)
+            if typeName and isBatteryType(typeName) and (isPowerCellType(typeName) == group.isPowerCell) then
+                currentCount = currentCount + 1
             end
         end
 
@@ -843,16 +787,14 @@ local function doBatteryManagement(pawn, playerInv)
                     if ok and items then
                         for _, item in ipairs(items) do
                             local s = item:get()
-                            if s.ItemType then
-                                local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                                if ok2 and isBatteryType(typeName) then
-                                    local current, max = readCharge(s)
-                                    table.insert(pullCandidates, {
-                                        itemId = s.ItemId,
-                                        inventoryId = s.InventoryId,
-                                        chargePercent = (current and max and max > 0) and (current / max) or 0,
-                                    })
-                                end
+                            local typeName = readItemTypeName(s)
+                            if typeName and isBatteryType(typeName) then
+                                local current, max = readCharge(s)
+                                table.insert(pullCandidates, {
+                                    itemId = s.ItemId,
+                                    inventoryId = s.InventoryId,
+                                    chargePercent = (current and max and max > 0) and (current / max) or 0,
+                                })
                             end
                         end
                     end
@@ -917,19 +859,17 @@ local function routeOverflowBatteriesToTerminal(pawn, playerInv, overflowLockers
         if ok and items then
             for _, item in ipairs(items) do
                 local s = item:get()
-                if s.ItemType then
-                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                    if ok2 and isBatteryType(typeName) then
-                        local isPC = isPowerCellType(typeName)
-                        for _, term in ipairs(terminalInvs) do
-                            if term.forPowerCell == isPC then
-                                local ok3 = pcall(function()
-                                    playerInv:MoveItemBetweenInventories(s.ItemId, s.InventoryId, term.inv.InventoryId)
-                                end)
-                                if ok3 then
-                                    moved = moved + 1
-                                    break
-                                end
+                local typeName = readItemTypeName(s)
+                if typeName and isBatteryType(typeName) then
+                    local isPC = isPowerCellType(typeName)
+                    for _, term in ipairs(terminalInvs) do
+                        if term.forPowerCell == isPC then
+                            local ok3 = pcall(function()
+                                playerInv:MoveItemBetweenInventories(s.ItemId, s.InventoryId, term.inv.InventoryId)
+                            end)
+                            if ok3 then
+                                moved = moved + 1
+                                break
                             end
                         end
                     end
@@ -1094,24 +1034,22 @@ local function doQuickStack()
             if ok and items then
                 for _, item in ipairs(items) do
                     local s = item:get()
-                    if s.ItemType then
-                        local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                        if ok2 then
-                            local category = categories.getConsumableCategory(typeName)
-                            if category then
-                                local displayName = nil
-                                pcall(function() displayName = s.ItemType.Name:ToString() end)
-                                table.insert(restockCandidates, {
-                                    itemId = s.ItemId,
-                                    inventoryId = s.InventoryId,
-                                    typeName = typeName,
-                                    displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
-                                    itemType = s.ItemType,
-                                    category = category,
-                                    priority = categories.getPriority(typeName, category),
-                                    lockerInv = inv,
-                                })
-                            end
+                    local typeName = readItemTypeName(s)
+                    if typeName then
+                        local category = categories.getConsumableCategory(typeName)
+                        if category then
+                            local displayName = nil
+                            pcall(function() displayName = s.ItemType.Name:ToString() end)
+                            table.insert(restockCandidates, {
+                                itemId = s.ItemId,
+                                inventoryId = s.InventoryId,
+                                typeName = typeName,
+                                displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
+                                itemType = s.ItemType,
+                                category = category,
+                                priority = categories.getPriority(typeName, category),
+                                lockerInv = inv,
+                            })
                         end
                     end
                 end
@@ -1145,19 +1083,17 @@ local function doQuickStack()
         local playerItems = playerInv:GetItems()
         for _, item in ipairs(playerItems) do
             local s = item:get()
-            if s.ItemType then
-                local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                if ok then
-                    local cat = categories.getConsumableCategory(typeName)
-                    if cat then
-                        currentCounts[cat] = currentCounts[cat] + 1
-                        table.insert(heldByCategory[cat], {
-                            itemId = s.ItemId,
-                            inventoryId = s.InventoryId,
-                            typeName = typeName,
-                            priority = categories.getPriority(typeName, cat),
-                        })
-                    end
+            local typeName = readItemTypeName(s)
+            if typeName then
+                local cat = categories.getConsumableCategory(typeName)
+                if cat then
+                    currentCounts[cat] = currentCounts[cat] + 1
+                    table.insert(heldByCategory[cat], {
+                        itemId = s.ItemId,
+                        inventoryId = s.InventoryId,
+                        typeName = typeName,
+                        priority = categories.getPriority(typeName, cat),
+                    })
                 end
             end
         end
@@ -1408,10 +1344,8 @@ local function doQuickStackOpen()
     if ok and containerItems then
         for _, item in ipairs(containerItems) do
             local s = item:get()
-            if s.ItemType then
-                local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                if ok2 then containerTypes[typeName] = true end
-            end
+            local typeName = readItemTypeName(s)
+            if typeName then containerTypes[typeName] = true end
         end
     end
 
@@ -1543,11 +1477,9 @@ local function doSortOverflow()
             targetItemCount[i] = #items
             for _, item in ipairs(items) do
                 local s = item:get()
-                if s.ItemType then
-                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                    if ok2 then
-                        targetTypeData[i][typeName] = (targetTypeData[i][typeName] or 0) + 1
-                    end
+                local typeName = readItemTypeName(s)
+                if typeName then
+                    targetTypeData[i][typeName] = (targetTypeData[i][typeName] or 0) + 1
                 end
             end
         end
@@ -1566,16 +1498,11 @@ local function doSortOverflow()
 
         for _, rawItem in ipairs(overflowItems) do
             local s = rawItem:get()
-            if not s.ItemType then goto nextOverflowItem end
+            local info = readItemInfo(s)
+            if not info then goto nextOverflowItem end
 
-            local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-            if not ok2 then goto nextOverflowItem end
-
-            local displayName = nil
-            pcall(function() displayName = s.ItemType.Name:ToString() end)
-            if not displayName or displayName == "" then
-                displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
-            end
+            local typeName = info.typeName
+            local displayName = info.displayName
 
             -- Find best target (same scoring as main transfer)
             local bestLabelScore = 0
@@ -1726,24 +1653,22 @@ local function doRestockOnly()
         if ok and items then
             for _, item in ipairs(items) do
                 local s = item:get()
-                if s.ItemType then
-                    local ok2, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-                    if ok2 then
-                        local category = categories.getConsumableCategory(typeName)
-                        if category then
-                            local displayName = nil
-                            pcall(function() displayName = s.ItemType.Name:ToString() end)
-                            table.insert(restockCandidates, {
-                                itemId = s.ItemId,
-                                inventoryId = s.InventoryId,
-                                typeName = typeName,
-                                displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
-                                itemType = s.ItemType,
-                                category = category,
-                                priority = categories.getPriority(typeName, category),
-                                lockerInv = inv,
-                            })
-                        end
+                local typeName = readItemTypeName(s)
+                if typeName then
+                    local category = categories.getConsumableCategory(typeName)
+                    if category then
+                        local displayName = nil
+                        pcall(function() displayName = s.ItemType.Name:ToString() end)
+                        table.insert(restockCandidates, {
+                            itemId = s.ItemId,
+                            inventoryId = s.InventoryId,
+                            typeName = typeName,
+                            displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
+                            itemType = s.ItemType,
+                            category = category,
+                            priority = categories.getPriority(typeName, category),
+                            lockerInv = inv,
+                        })
                     end
                 end
             end
@@ -1778,19 +1703,17 @@ local function doRestockOnly()
     local playerItems = playerInv:GetItems()
     for _, item in ipairs(playerItems) do
         local s = item:get()
-        if s.ItemType then
-            local ok, typeName = pcall(function() return s.ItemType:GetFName():ToString() end)
-            if ok then
-                local cat = categories.getConsumableCategory(typeName)
-                if cat then
-                    currentCounts[cat] = currentCounts[cat] + 1
-                    table.insert(heldByCategory[cat], {
-                        itemId = s.ItemId,
-                        inventoryId = s.InventoryId,
-                        typeName = typeName,
-                        priority = categories.getPriority(typeName, cat),
-                    })
-                end
+        local typeName = readItemTypeName(s)
+        if typeName then
+            local cat = categories.getConsumableCategory(typeName)
+            if cat then
+                currentCounts[cat] = currentCounts[cat] + 1
+                table.insert(heldByCategory[cat], {
+                    itemId = s.ItemId,
+                    inventoryId = s.InventoryId,
+                    typeName = typeName,
+                    priority = categories.getPriority(typeName, cat),
+                })
             end
         end
     end

@@ -60,4 +60,38 @@ function utils.MetersToUnits(meters)
     return meters * 100
 end
 
+--- Read common item data from an inventory item struct.
+--- Returns table { typeName, displayName, fullName, itemId, inventoryId, itemType, count } or nil.
+function utils.readItemInfo(itemStruct)
+    if not itemStruct.ItemType then return nil end
+    local ok, typeName = pcall(function() return itemStruct.ItemType:GetFName():ToString() end)
+    if not ok then return nil end
+
+    local ok2, fullName = pcall(function() return itemStruct.ItemType:GetFullName() end)
+
+    local displayName = nil
+    pcall(function() displayName = itemStruct.ItemType.Name:ToString() end)
+    if not displayName or displayName == "" then
+        displayName = typeName:gsub("^DA_", ""):gsub("_ItemType$", "")
+    end
+
+    return {
+        typeName = typeName,
+        displayName = displayName,
+        fullName = ok2 and fullName or "",
+        itemId = itemStruct.ItemId,
+        inventoryId = itemStruct.InventoryId,
+        itemType = itemStruct.ItemType,
+        count = itemStruct.Count or 1,
+    }
+end
+
+--- Read just the typeName from an inventory item struct. Returns string or nil.
+function utils.readItemTypeName(itemStruct)
+    if not itemStruct.ItemType then return nil end
+    local ok, typeName = pcall(function() return itemStruct.ItemType:GetFName():ToString() end)
+    if ok then return typeName end
+    return nil
+end
+
 return utils
