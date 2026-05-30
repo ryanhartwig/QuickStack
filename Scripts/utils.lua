@@ -22,8 +22,8 @@ function utils.GetPlayerPawn()
         print("[QuickStack] ERROR: Could not get player controller\n")
         return nil
     end
-    local pawn = controller.Pawn
-    if not pawn:IsValid() then
+    local ok, pawn = pcall(function() return controller.Pawn end)
+    if not ok or not pawn or not pawn:IsValid() then
         print("[QuickStack] ERROR: Could not get player pawn\n")
         return nil
     end

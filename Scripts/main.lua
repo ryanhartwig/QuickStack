@@ -167,6 +167,10 @@ local scoreLockerMatch = matching.scoreLockerMatch
 local waitForReplication = ui.waitForReplication
 local showTransferSummary = ui.showTransferSummary
 
+-- Constants
+local DEFAULT_MAX_ITEMS = 30
+local BATTERY_FULL_THRESHOLD = 0.99
+
 --- Read the user-set label from a locker's UGCComponent
 local function getLockerLabel(actor)
     local ok, ugc = pcall(function() return actor.UGCComponent end)
@@ -354,7 +358,7 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
         lockerLabels[i] = data.label
         lockerItemCount[i] = 0
         local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
-        lockerMaxItems[i] = (ok0 and maxItems) or 30
+        lockerMaxItems[i] = (ok0 and maxItems) or DEFAULT_MAX_ITEMS
         local ok, lockerItems = pcall(function() return data.inventory:GetItems() end)
         if ok and lockerItems then
             lockerItemCount[i] = #lockerItems
@@ -549,7 +553,7 @@ local function doBatterySwap(pawn, playerInv)
     table.sort(playerBatteries, function(a, b) return a.chargePercent < b.chargePercent end)
 
     for _, playerBat in ipairs(playerBatteries) do
-        if playerBat.chargePercent >= 0.99 then goto nextBattery end
+        if playerBat.chargePercent >= BATTERY_FULL_THRESHOLD then goto nextBattery end
 
         -- Find best unused charger battery (same type, highest charge, better than player's)
         local bestIdx = nil
@@ -1038,15 +1042,13 @@ local function doQuickStack()
 
                             local label = nil
                             if rawLabel and config.LabelRouting then
-                                if rawLabel then
-                                    if config.LabelPrefix == "" then
-                                        label = rawLabel
-                                    else
-                                        local prefixLen = #config.LabelPrefix
-                                        if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
-                                            label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
-                                            if label == "" then label = nil end
-                                        end
+                                if config.LabelPrefix == "" then
+                                    label = rawLabel
+                                else
+                                    local prefixLen = #config.LabelPrefix
+                                    if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
+                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
+                                        if label == "" then label = nil end
                                     end
                                 end
                             end
@@ -1200,8 +1202,8 @@ local function doQuickStack()
             local held = heldByCategory[cat]
             if #held == 0 then goto nextCat end
 
-            for _, candidate in ipairs(restockCandidates) do
-                if usedCandidates[_] then goto nextCandidate end
+            for i, candidate in ipairs(restockCandidates) do
+                if usedCandidates[i] then goto nextCandidate end
                 if candidate.category ~= cat then goto nextCandidate end
 
                 -- Find player's worst item in this category
@@ -1221,7 +1223,7 @@ local function doQuickStack()
                             candidate.itemId, candidate.inventoryId, playerInvId)
                     end)
                     if pullOk then
-                        usedCandidates[_] = true
+                        usedCandidates[i] = true
                         table.remove(held, 1)  -- remove worst from tracking
                         recordRestock(candidate)
                     else
@@ -1328,7 +1330,7 @@ local function doQuickStack()
         for i, data in ipairs(overflowLockers) do
             overflowItemCount[i] = 0
             local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
-            overflowMaxItems[i] = (ok0 and maxItems) or 30
+            overflowMaxItems[i] = (ok0 and maxItems) or DEFAULT_MAX_ITEMS
             local ok, items = pcall(function() return data.inventory:GetItems() end)
             if ok and items then
                 overflowItemCount[i] = #items
@@ -1535,7 +1537,7 @@ local function doSortOverflow()
         targetLabels[i] = data.label
         targetItemCount[i] = 0
         local ok0, maxItems = pcall(function() return data.inventory.MaxItems end)
-        targetMaxItems[i] = (ok0 and maxItems) or 30
+        targetMaxItems[i] = (ok0 and maxItems) or DEFAULT_MAX_ITEMS
         local ok, items = pcall(function() return data.inventory:GetItems() end)
         if ok and items then
             targetItemCount[i] = #items
