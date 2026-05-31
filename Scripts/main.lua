@@ -12,6 +12,7 @@ local categories = require("categories")
 local battery = require("battery")
 local restock = require("restock")
 local ui = require("ui")
+local autolabel = require("autolabel")
 local lang = require("lang")
 local L = lang.L
 
@@ -19,6 +20,7 @@ categories.init(config)
 battery.init(config)
 restock.init(config)
 ui.init(config)
+autolabel.init(config)
 
 local VERSION = "3.3.3"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
@@ -72,6 +74,10 @@ do
           description='%s',
           type="slider", default=6, min=2, max=15, step=1, format="integer",
           enabled_by="summary_panel" },
+
+        { key="auto_label_max", title='%s',
+          description='%s',
+          type="slider", default=0, min=0, max=5, step=1, format="integer" },
     },
 }
 ]=],
@@ -84,7 +90,8 @@ do
         esc(L("battery_budget_title")), esc(L("battery_budget_desc")),
         esc(L("powercell_budget_title")), esc(L("powercell_budget_desc")),
         esc(L("summary_title")), esc(L("summary_desc")),
-        esc(L("summary_dur_title")), esc(L("summary_dur_desc"))
+        esc(L("summary_dur_title")), esc(L("summary_dur_desc")),
+        esc(L("auto_label_title")), esc(L("auto_label_desc"))
         )
     end
 
@@ -799,7 +806,14 @@ local function registerCooldownBind(key, actionFn)
             if now - lastActivation < config.Cooldown then return end
             lastActivation = now
             config.refreshModSettings()
+            autolabel.suppress = true
             actionFn()
+            -- Delay clearing to cover async callbacks (waitForReplication)
+            ExecuteWithDelay(2000, function()
+                ExecuteInGameThread(function()
+                    autolabel.suppress = false
+                end)
+            end)
         end)
     end)
 end

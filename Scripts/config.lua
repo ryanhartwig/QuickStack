@@ -29,6 +29,7 @@ config.SummaryDuration = 6
 config.SummaryPosition = "right"
 config.SummaryTextScale = 1.0
 config.SummaryTruncate = 15
+config.AutoLabelMax = 0
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -117,6 +118,8 @@ local function loadConfig()
                     if v == "left" or v == "right" then config.SummaryPosition = v end
                 elseif key == "summary_text_scale" then
                     config.SummaryTextScale = tonumber(value) or 1.0
+                elseif key == "auto_label_max" then
+                    config.AutoLabelMax = tonumber(value) or 0
                 end
             end
         end
@@ -142,6 +145,7 @@ local settingsMap = {
     { key = "restock_powercell_count", field = "RestockPowerCellCount", type = "number" },
     { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
+    { key = "auto_label_max",      field = "AutoLabelMax",      type = "number" },
 }
 
 function config.refreshModSettings()

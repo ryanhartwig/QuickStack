@@ -75,6 +75,8 @@ strings.en = {
     summary_desc          = "Show the visual transfer summary panel with item icons after quick-stacking.",
     summary_dur_title     = "Summary Duration (seconds)",
     summary_dur_desc      = "How long the summary panel stays on screen.",
+    auto_label_title      = "Auto-Label Max",
+    auto_label_desc       = "Auto-name unlabeled lockers when you deposit items. 0 = disabled.",
 }
 
 strings.zh = {
@@ -132,6 +134,8 @@ strings.zh = {
     summary_desc          = "快速堆叠后显示带有物品图标的传输摘要面板。",
     summary_dur_title     = "摘要显示时长（秒）",
     summary_dur_desc      = "摘要面板在屏幕上停留的时间。",
+    auto_label_title      = "自动标签数量",
+    auto_label_desc       = "手动存放物品时自动命名未标记的储物柜。设为0禁用。",
 }
 
 -----------------------------------------------------------

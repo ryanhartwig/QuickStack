@@ -41,6 +41,11 @@ overflow_prefix=%o
 # Increase to allow longer comma-separated labels
 label_max_chars=50
 
+# Auto-label: automatically name lockers based on items deposited manually
+# Set to 0 to disable. When > 0, depositing items into an unlabeled locker
+# will set its label to the item name(s), up to this many unique names.
+auto_label_max=0
+
 # ── Consumable Restock ──
 
 # After quick-stacking, automatically restock consumables from nearby lockers
