@@ -99,6 +99,28 @@ function restock.execute(playerInv, candidates)
     end
 
     -- Phase 2: Upgrade worst for best
+    -- Re-scan player consumables after Phase 1 pulls (snapshot may be stale)
+    heldByCategory = { food = {}, drink = {}, heal = {} }
+    playerItems = playerInv:GetItems()
+    for _, item in ipairs(playerItems) do
+        local s = item:get()
+        local typeName = utils.readItemTypeName(s)
+        if typeName then
+            local cat = categories.getConsumableCategory(typeName)
+            if cat then
+                table.insert(heldByCategory[cat], {
+                    itemId = s.ItemId,
+                    inventoryId = s.InventoryId,
+                    typeName = typeName,
+                    priority = categories.getPriority(typeName, cat),
+                })
+            end
+        end
+    end
+    for _, items in pairs(heldByCategory) do
+        table.sort(items, function(a, b) return a.priority > b.priority end)
+    end
+
     local configBudgets = {
         food  = config.RestockFoodCount or 0,
         drink = config.RestockDrinkCount or 0,

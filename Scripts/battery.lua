@@ -198,7 +198,7 @@ function battery.doBatteryManagement(pawn, playerInv)
                 end
             end
         end
-        return 0, 0, unplaced
+        return 0, 0, unplaced, {}
     end
 
     -- Snapshot ALL terminal batteries (shared across groups, used flag prevents double-swap)

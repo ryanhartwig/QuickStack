@@ -58,7 +58,7 @@ function autolabel.init(cfg)
     -- Cache: one getOpenContainerInfo() call per container, not per hook fire.
     -- Also caches parsed label state to avoid repeated getLockerLabel + parsing.
     -- Cache invalidates when a different inventoryId is seen (player opens a different container).
-    local cache = { invId = nil, owner = nil, names = nil }
+    local cache = { invId = nil, owner = nil, names = nil, rawLabel = nil }
 
     -- Cache player inventory ID to skip hook fires for player inventory (item pulls)
     local playerInvId = nil
@@ -91,15 +91,16 @@ function autolabel.init(cfg)
             local _, openInvId, owner = getOpenContainerInfo()
             if openInvId == hookInvId and owner then
                 -- Read current label state once for this container
-                local currentLabel = utils.getLockerLabel(owner)
+                local currentLabel = utils.getLockerLabel(owner) or ""
                 local names = parseNames(currentLabel)
                 cache = {
                     invId = hookInvId,
                     owner = owner,
                     names = names,
+                    rawLabel = currentLabel,
                 }
             else
-                cache = { invId = hookInvId, owner = nil, names = nil }
+                cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
                 return
             end
         end
@@ -107,12 +108,11 @@ function autolabel.init(cfg)
         -- Fast bail: not a valid target
         if not cache.owner then return end
 
-        -- Staleness check: if the label was manually cleared, reset cached names
-        if #cache.names > 0 then
-            local realLabel = utils.getLockerLabel(cache.owner)
-            if not realLabel or realLabel == "" then
-                cache.names = {}
-            end
+        -- Staleness check: if the label was manually changed or cleared, re-read it
+        local realLabel = utils.getLockerLabel(cache.owner) or ""
+        if realLabel ~= cache.rawLabel then
+            cache.names = parseNames(realLabel)
+            cache.rawLabel = realLabel
         end
 
         -- Check if at max
@@ -142,9 +142,10 @@ function autolabel.init(cfg)
         table.insert(cache.names, newName)
         local newLabel = table.concat(cache.names, ", ")
 
-        -- Set label and update lock state
+        -- Set label and sync cache
         local key = { TagName = FName("None") }
         pcall(function() ugc:ServerSetPlayerText(key, newLabel) end)
+        cache.rawLabel = newLabel
     end)
 end
 
