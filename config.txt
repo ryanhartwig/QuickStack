@@ -39,12 +39,12 @@ overflow_prefix=%o
 
 # Max characters allowed in locker label input (game default is 15)
 # Increase to allow longer comma-separated labels
-label_max_chars=50
+label_max_chars=200
 
 # Auto-label: automatically name lockers based on items deposited manually
 # Set to 0 to disable. When > 0, depositing items into an unlabeled locker
 # will set its label to the item name(s), up to this many unique names.
-auto_label_max=0
+auto_label_max=2
 
 # ── Consumable Restock ──
 
