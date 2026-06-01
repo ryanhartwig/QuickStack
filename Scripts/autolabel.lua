@@ -82,15 +82,13 @@ function autolabel.init(cfg)
         end
         if hookInvId == playerInvId then return end
 
-        -- Quick config check (before any expensive work)
-        local maxLabels = config.AutoLabelMax or 0
-        if maxLabels <= 0 then return end
-
-        -- Cache: only scan for the open container when the target inventory changes
+        -- Cache: only scan when the target inventory changes (once per new container)
         if hookInvId ~= cache.invId then
+            -- Refresh config on container change so SN2ModSettings slider updates apply
+            config.refreshModSettings()
+
             local _, openInvId, owner = getOpenContainerInfo()
             if openInvId == hookInvId and owner then
-                -- Read current label state once for this container
                 local currentLabel = utils.getLockerLabel(owner) or ""
                 local names = parseNames(currentLabel)
                 cache = {
@@ -104,6 +102,10 @@ function autolabel.init(cfg)
                 return
             end
         end
+
+        -- Config check (after potential refresh)
+        local maxLabels = config.AutoLabelMax or 0
+        if maxLabels <= 0 then return end
 
         -- Fast bail: not a valid target
         if not cache.owner then return end
