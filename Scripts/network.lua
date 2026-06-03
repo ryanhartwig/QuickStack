@@ -25,11 +25,15 @@ end
 --- On the host, this calls back into the local hook (self-send)
 function network.sendToHost(msgType, payload)
     local pc = UEHelpers:GetPlayerController()
-    if not pc or not pc:IsValid() then return end
+    if not pc or not pc:IsValid() then
+        print(string.format("[QuickStack] network.sendToHost(%s): no valid PC\n", msgType))
+        return
+    end
     local msg = PREFIX .. msgType
     if payload and payload ~= "" then
         msg = msg .. "|" .. payload
     end
+    print(string.format("[QuickStack] network.sendToHost: %s (isHost=%s)\n", msg, tostring(network.isHost())))
     pc:ServerExecRPC(msg)
 end
 

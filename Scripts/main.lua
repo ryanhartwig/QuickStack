@@ -1094,11 +1094,19 @@ registerCooldownBind(bindKeyOverflow, doSortOverflow)
 
 -- Network handlers: host executes operations on behalf of clients
 network.onMessage("BATSWAP", function(senderPC)
+    print("[QuickStack] BATSWAP received from client\n")
     local ok, pawn = pcall(function() return senderPC.Pawn end)
-    if not ok or not pawn or not pawn:IsValid() then return end
+    if not ok or not pawn or not pawn:IsValid() then
+        print("[QuickStack] BATSWAP: sender pawn invalid\n")
+        return
+    end
     local okInv, inv = pcall(function() return pawn.InventoryComponent end)
-    if not okInv or not inv or not inv:IsValid() then return end
-    battery.doBatterySwap(pawn, inv)
+    if not okInv or not inv or not inv:IsValid() then
+        print("[QuickStack] BATSWAP: sender inv invalid\n")
+        return
+    end
+    local count = battery.doBatterySwap(pawn, inv)
+    print(string.format("[QuickStack] BATSWAP: swapped %d for client\n", count))
 end)
 
 network.onMessage("SETLABEL", function(senderPC, payload)
