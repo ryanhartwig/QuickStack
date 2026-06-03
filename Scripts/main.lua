@@ -190,26 +190,55 @@ local DEFAULT_MAX_ITEMS = utils.DEFAULT_MAX_ITEMS
 
 --- Get the inventory component of the currently open container
 local function getOpenContainerInventory()
+    -- Standard inventory tab (lockers, chests, etc.)
     local tabs = FindAllOf("WBP_TabInventory_C")
-    if not tabs then return nil end
-    for _, tab in ipairs(tabs) do
-        if tab:IsValid() then
-            local ok, active = pcall(function() return tab:IsActivated() end)
-            if ok and active then
-                local ok2, vm = pcall(function() return tab.ViewModel end)
-                if ok2 and vm and vm:IsValid() then
-                    local ok3, otherInv = pcall(function() return vm.OtherInventory end)
-                    if ok3 and otherInv and otherInv:IsValid() then
-                        local ok4, invComp = pcall(function() return otherInv.InventoryComponent end)
-                        if ok4 and invComp and invComp:IsValid() then
-                            return invComp
+    if tabs then
+        for _, tab in ipairs(tabs) do
+            if tab:IsValid() then
+                local ok, active = pcall(function() return tab:IsActivated() end)
+                if ok and active then
+                    local ok2, vm = pcall(function() return tab.ViewModel end)
+                    if ok2 and vm and vm:IsValid() then
+                        local ok3, otherInv = pcall(function() return vm.OtherInventory end)
+                        if ok3 and otherInv and otherInv:IsValid() then
+                            local ok4, invComp = pcall(function() return otherInv.InventoryComponent end)
+                            if ok4 and invComp and invComp:IsValid() then
+                                return invComp
+                            end
                         end
                     end
                 end
             end
         end
     end
-    return nil
+
+    -- Bioreactor screen (custom UI, not a standard inventory tab)
+    local bioScreens = FindAllOf("WBP_BioreactorScreen_C")
+    if bioScreens then
+        for _, screen in ipairs(bioScreens) do
+            if screen:IsValid() then
+                local okA, active = pcall(function() return screen:IsActivated() end)
+                if okA and active then
+                    local pawn = utils.GetPlayerPawn()
+                    if pawn then
+                        local bioreactors = FindAllOf("SN2Bioreactor")
+                        if bioreactors then
+                            for _, br in ipairs(bioreactors) do
+                                if br:IsValid() and utils.GetDistance(pawn, br) <= utils.MetersToUnits(config.Radius) then
+                                    local okInv, inv = pcall(function() return br.InventoryComponent end)
+                                    if okInv and inv and inv:IsValid() then
+                                        return inv, true  -- true = skip keep rules
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, false
 end
 
 --- Build the list of player items, filtered by keep rules
@@ -687,7 +716,7 @@ end
 
 --- Quick Stack into the currently open container (matching items only)
 local function doQuickStackOpen()
-    local containerInv = getOpenContainerInventory()
+    local containerInv, skipKeepRules = getOpenContainerInventory()
     if not containerInv then
         utils.Notify(L("no_container_open"), config)
         return
@@ -699,7 +728,22 @@ local function doQuickStackOpen()
     local playerInv = pawn.InventoryComponent
     if not playerInv or not playerInv:IsValid() then return end
 
-    local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
+    -- Bioreactor etc.: skip keep rules so consumables/equipment can be deposited
+    local transferableItems, totalItemsBefore
+    if skipKeepRules then
+        local items = playerInv:GetItems()
+        totalItemsBefore = #items
+        transferableItems = {}
+        for _, playerItem in ipairs(items) do
+            local s = playerItem:get()
+            local itemData = readItemInfo(s)
+            if itemData then
+                table.insert(transferableItems, itemData)
+            end
+        end
+    else
+        transferableItems, totalItemsBefore = getTransferableItems(playerInv)
+    end
     if #transferableItems == 0 then
         utils.Notify(L("nothing_to_stack"), config)
         return
