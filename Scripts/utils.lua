@@ -17,8 +17,17 @@ end
 --- Get the player pawn (physical character in the world)
 --- Uses IsLocalPlayerController() to find the correct controller on listen servers,
 --- since UEHelpers:GetPlayerController() can return a remote client's controller.
+--- Caches result after first success to avoid repeated FindAllOf calls.
 ---@return userdata|nil The player pawn actor, or nil if not found
+local cachedPawn = nil
 function utils.GetPlayerPawn()
+    -- Return cached pawn if still valid
+    if cachedPawn then
+        local ok, valid = pcall(function() return cachedPawn:IsValid() end)
+        if ok and valid then return cachedPawn end
+        cachedPawn = nil
+    end
+
     local allPCs = FindAllOf("PlayerController")
     if allPCs then
         for _, pc in ipairs(allPCs) do
@@ -26,7 +35,10 @@ function utils.GetPlayerPawn()
                 local okLocal, isLocal = pcall(function() return pc:IsLocalPlayerController() end)
                 if okLocal and isLocal then
                     local ok, pawn = pcall(function() return pc.Pawn end)
-                    if ok and pawn and pawn:IsValid() then return pawn end
+                    if ok and pawn and pawn:IsValid() then
+                        cachedPawn = pawn
+                        return pawn
+                    end
                 end
             end
         end
@@ -35,9 +47,11 @@ function utils.GetPlayerPawn()
     local controller = UEHelpers:GetPlayerController()
     if controller and controller:IsValid() then
         local ok, pawn = pcall(function() return controller.Pawn end)
-        if ok and pawn and pawn:IsValid() then return pawn end
+        if ok and pawn and pawn:IsValid() then
+            cachedPawn = pawn
+            return pawn
+        end
     end
-    print("[QuickStack] ERROR: Could not get local player pawn\n")
     return nil
 end
 
