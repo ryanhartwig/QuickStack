@@ -27,8 +27,8 @@ config.SummaryPanel = true
 config.SummaryShowDestination = true
 config.SummaryDuration = 6
 config.SummaryPosition = "right"
-config.SummaryTextScale = 1.0
-config.SummaryTruncate = 15
+config.SummaryTextScale = 0.8
+config.SummaryTruncate = 20
 config.AutoLabelMax = 0
 config.SortFromTadpole = false
 config.AutoSortOnEntry = false
@@ -144,20 +144,42 @@ end
 loadConfig()
 
 -- Override with SN2ModSettings values if available (optional dependency)
+-- transform: optional function to post-process the value before storing
 local settingsMap = {
+    -- Controls
+    { key = "keybind",             field = "Keybind",           type = "string", transform = string.upper },
+    { key = "keybind_open",        field = "KeybindOpen",       type = "string", transform = string.upper },
+    { key = "keybind_overflow",    field = "KeybindOverflow",   type = "string", transform = string.upper },
+    -- Stacking
     { key = "radius",              field = "Radius",            type = "number" },
-    { key = "battery_swap",        field = "BatterySwap",       type = "boolean" },
+    { key = "stack_tools",         field = "StackTools",        type = "boolean" },
+    { key = "stack_equipment",     field = "StackEquipment",    type = "boolean" },
+    { key = "stack_consumables",   field = "StackConsumables",  type = "boolean" },
+    -- Label routing
+    { key = "label_routing",       field = "LabelRouting",      type = "boolean" },
+    -- Restock
     { key = "restock_food_count",  field = "RestockFoodCount",  type = "number" },
     { key = "restock_drink_count", field = "RestockDrinkCount", type = "number" },
     { key = "restock_heal_count",  field = "RestockHealCount",  type = "number" },
+    { key = "battery_swap",        field = "BatterySwap",       type = "boolean" },
     { key = "restock_battery_count", field = "RestockBatteryCount", type = "number" },
     { key = "restock_powercell_count", field = "RestockPowerCellCount", type = "number" },
+    -- Auto-label
+    { key = "auto_label_max",      field = "AutoLabelMax",      type = "number" },
+    -- Notifications
+    { key = "notify",              field = "Notify",            type = "boolean" },
     { key = "summary_panel",       field = "SummaryPanel",      type = "boolean" },
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
-    { key = "auto_label_max",      field = "AutoLabelMax",      type = "number" },
+    { key = "summary_show_dest",   field = "SummaryShowDestination", type = "boolean" },
+    { key = "summary_truncate",    field = "SummaryTruncate",   type = "number" },
+    { key = "summary_position_left", field = "SummaryPosition", type = "boolean",
+      transform = function(v) return v and "left" or "right" end },
+    { key = "summary_text_scale",  field = "SummaryTextScale",  type = "number", raw = true },
+    -- Vehicle sourcing
     { key = "sort_from_tadpole",   field = "SortFromTadpole",   type = "boolean" },
+    -- Auto-sort
     { key = "auto_sort_on_entry",  field = "AutoSortOnEntry",   type = "boolean" },
-    { key = "auto_sort_cooldown", field = "AutoSortCooldown",  type = "number" },
+    { key = "auto_sort_cooldown",  field = "AutoSortCooldown",  type = "number" },
 }
 
 function config.refreshModSettings()
@@ -167,9 +189,12 @@ function config.refreshModSettings()
             return ModRef:GetSharedVariable("SN2ModSettings/QuickStack/" .. entry.key)
         end)
         if ok and val ~= nil and type(val) == entry.type then
-            -- SN2ModSettings sliders return floats — round to int for integer settings
-            if entry.type == "number" then
+            -- SN2ModSettings sliders return floats — round to int unless raw
+            if entry.type == "number" and not entry.raw then
                 val = math.floor(val + 0.5)
+            end
+            if entry.transform then
+                val = entry.transform(val)
             end
             config[entry.field] = val
         end

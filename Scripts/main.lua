@@ -39,34 +39,65 @@ do
     github   = "ryanhartwig/QuickStack",
     nexus_id = "128",
     settings = {
+        -- Controls
+        { key="keybind", title='%s',
+          description='%s',
+          type="keybind", default="N" },
+        { key="keybind_open", title='%s',
+          description='%s',
+          type="keybind", default="G" },
+        { key="keybind_overflow", title='%s',
+          description='%s',
+          type="keybind", default="H" },
+
+        -- Stacking
         { key="radius", title='%s',
           description='%s',
           type="slider", default=25, min=5, max=235, step=5, format="integer" },
+        { key="stack_tools", title='%s',
+          description='%s',
+          type="toggle", default=false },
+        { key="stack_equipment", title='%s',
+          description='%s',
+          type="toggle", default=false },
+        { key="stack_consumables", title='%s',
+          description='%s',
+          type="toggle", default=false },
 
+        -- Label routing
+        { key="label_routing", title='%s',
+          description='%s',
+          type="toggle", default=true },
+
+        -- Restock
+        { key="restock_food_count", title='%s',
+          description='%s',
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+        { key="restock_drink_count", title='%s',
+          description='%s',
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+        { key="restock_heal_count", title='%s',
+          description='%s',
+          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+        { key="restock_battery_count", title='%s',
+          description='%s',
+          type="slider", default=0, min=0, max=10, step=1, format="integer" },
+        { key="restock_powercell_count", title='%s',
+          description='%s',
+          type="slider", default=0, min=0, max=10, step=1, format="integer" },
         { key="battery_swap", title='%s',
           description='%s',
           type="toggle", default=true },
 
-        { key="restock_food_count", title='%s',
+        -- Auto-label
+        { key="auto_label_max", title='%s',
           description='%s',
-          type="slider", default=2, min=0, max=10, step=1, format="integer" },
+          type="slider", default=0, min=0, max=5, step=1, format="integer" },
 
-        { key="restock_drink_count", title='%s',
+        -- Notifications
+        { key="notify", title='%s',
           description='%s',
-          type="slider", default=2, min=0, max=10, step=1, format="integer" },
-
-        { key="restock_heal_count", title='%s',
-          description='%s',
-          type="slider", default=2, min=0, max=10, step=1, format="integer" },
-
-        { key="restock_battery_count", title='%s',
-          description='%s',
-          type="slider", default=0, min=0, max=10, step=1, format="integer" },
-
-        { key="restock_powercell_count", title='%s',
-          description='%s',
-          type="slider", default=0, min=0, max=10, step=1, format="integer" },
-
+          type="toggle", default=true },
         { key="summary_panel", title='%s',
           description='%s',
           type="toggle", default=true },
@@ -74,15 +105,29 @@ do
           description='%s',
           type="slider", default=6, min=2, max=15, step=1, format="integer",
           enabled_by="summary_panel" },
-
-        { key="auto_label_max", title='%s',
+        { key="summary_show_dest", title='%s',
           description='%s',
-          type="slider", default=0, min=0, max=5, step=1, format="integer" },
+          type="toggle", default=true,
+          enabled_by="summary_panel" },
+        { key="summary_truncate", title='%s',
+          description='%s',
+          type="slider", default=20, min=0, max=50, step=5, format="integer",
+          enabled_by="summary_panel" },
+        { key="summary_position_left", title='%s',
+          description='%s',
+          type="toggle", default=false,
+          enabled_by="summary_panel" },
+        { key="summary_text_scale", title='%s',
+          description='%s',
+          type="slider", default=0.8, min=0.5, max=2.0, step=0.1, format="float",
+          enabled_by="summary_panel" },
 
+        -- Vehicle sourcing
         { key="sort_from_tadpole", title='%s',
           description='%s',
           type="toggle", default=false },
 
+        -- Auto-sort
         { key="auto_sort_on_entry", title='%s',
           description='%s',
           type="toggle", default=false },
@@ -94,17 +139,37 @@ do
 }
 ]=],
         esc(L("mod_display")), VERSION,
+        -- Controls
+        esc(L("keybind_title")), esc(L("keybind_desc")),
+        esc(L("keybind_open_title")), esc(L("keybind_open_desc")),
+        esc(L("keybind_overflow_title")), esc(L("keybind_overflow_desc")),
+        -- Stacking
         esc(L("radius_title")), esc(L("radius_desc")),
-        esc(L("battery_swap_title")), esc(L("battery_swap_desc")),
+        esc(L("stack_tools_title")), esc(L("stack_tools_desc")),
+        esc(L("stack_equip_title")), esc(L("stack_equip_desc")),
+        esc(L("stack_consum_title")), esc(L("stack_consum_desc")),
+        -- Label routing
+        esc(L("label_routing_title")), esc(L("label_routing_desc")),
+        -- Restock
         esc(L("food_title")), esc(L("food_desc")),
         esc(L("drink_title")), esc(L("drink_desc")),
         esc(L("heal_title")), esc(L("heal_desc")),
         esc(L("battery_budget_title")), esc(L("battery_budget_desc")),
         esc(L("powercell_budget_title")), esc(L("powercell_budget_desc")),
+        esc(L("battery_swap_title")), esc(L("battery_swap_desc")),
+        -- Auto-label
+        esc(L("auto_label_title")), esc(L("auto_label_desc")),
+        -- Notifications
+        esc(L("notify_title")), esc(L("notify_desc")),
         esc(L("summary_title")), esc(L("summary_desc")),
         esc(L("summary_dur_title")), esc(L("summary_dur_desc")),
-        esc(L("auto_label_title")), esc(L("auto_label_desc")),
+        esc(L("summary_dest_title")), esc(L("summary_dest_desc")),
+        esc(L("summary_trunc_title")), esc(L("summary_trunc_desc")),
+        esc(L("summary_left_title")), esc(L("summary_left_desc")),
+        esc(L("summary_scale_title")), esc(L("summary_scale_desc")),
+        -- Vehicle sourcing
         esc(L("tadpole_title")), esc(L("tadpole_desc")),
+        -- Auto-sort
         esc(L("auto_sort_title")), esc(L("auto_sort_desc")),
         esc(L("auto_sort_cd_title")), esc(L("auto_sort_cd_desc"))
         )

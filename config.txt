@@ -44,7 +44,7 @@ label_max_chars=200
 # Auto-label: automatically name lockers based on items deposited manually
 # Set to 0 to disable. When > 0, depositing items into an unlabeled locker
 # will set its label to the item name(s), up to this many unique names.
-auto_label_max=2
+auto_label_max=0
 
 # ── Consumable Restock ──
 
@@ -83,13 +83,13 @@ summary_show_destination=true
 summary_duration=6
 
 # Truncate destination labels to this many characters (0 = no truncation)
-summary_truncate=15
+summary_truncate=20
 
 # Summary panel position (right or left)
 summary_position=right
 
 # Summary panel text scale (0.5 = half size, 1.0 = default, 2.0 = double)
-summary_text_scale=1.0
+summary_text_scale=0.8
 
 # ── Vehicle Sourcing ──
 
