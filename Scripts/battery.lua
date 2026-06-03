@@ -103,33 +103,56 @@ function battery.doBatterySwap(pawn, playerInv)
 
         if bestIdx then
             local cb = chargerBatteries[bestIdx]
+            local beforeCount = #playerInv:GetItems()
 
-            -- Pull from charger first (frees slot if full), then push player battery in.
-            -- Step 1: Pull higher-charge battery from charger to player
-            local beforePull = #playerInv:GetItems()
+            -- Try push-first (works on clients; fails silently if terminal full)
             pcall(function()
                 playerInv:MoveItemBetweenInventories(
-                    cb.itemId, cb.inventoryId, playerInv.InventoryId)
+                    playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
             end)
-            local afterPull = #playerInv:GetItems()
+            local afterPush = #playerInv:GetItems()
 
-            if afterPull > beforePull then
-                -- Step 2: Push player's lower-charge battery to charger (slot available)
+            if afterPush < beforeCount then
+                -- Push succeeded (terminal had space), now pull charged battery
                 pcall(function()
                     playerInv:MoveItemBetweenInventories(
-                        playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
+                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
                 end)
-                local afterPush = #playerInv:GetItems()
-
-                if afterPush < afterPull then
+                local afterPull = #playerInv:GetItems()
+                if afterPull > afterPush then
                     swapCount = swapCount + 1
                     cb.used = true
                 else
-                    -- Push failed, return charger battery
+                    -- Pull failed, rollback push
                     pcall(function()
                         playerInv:MoveItemBetweenInventories(
-                            cb.itemId, playerInv.InventoryId, cb.inventoryId)
+                            playerBat.itemId, cb.chargerInv.InventoryId, playerBat.inventoryId)
                     end)
+                end
+            else
+                -- Push failed (terminal full): pull first to free a slot, then push
+                -- This path only works reliably on the host (synchronous replication)
+                pcall(function()
+                    playerInv:MoveItemBetweenInventories(
+                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
+                end)
+                local afterPull = #playerInv:GetItems()
+                if afterPull > beforeCount then
+                    pcall(function()
+                        playerInv:MoveItemBetweenInventories(
+                            playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
+                    end)
+                    local afterSwap = #playerInv:GetItems()
+                    if afterSwap < afterPull then
+                        swapCount = swapCount + 1
+                        cb.used = true
+                    else
+                        -- Push failed after pull, return charger battery
+                        pcall(function()
+                            playerInv:MoveItemBetweenInventories(
+                                cb.itemId, playerInv.InventoryId, cb.inventoryId)
+                        end)
+                    end
                 end
             end
         end
