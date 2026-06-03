@@ -97,3 +97,11 @@ summary_text_scale=1.0
 # attached to hardpoints) and distribute them to nearby base lockers.
 # Only acts as a source — items are never routed INTO tadpole inventories.
 sort_from_tadpole=false
+
+# Automatically run quick-stack when entering a base habitat.
+# Triggers on the swim-to-walk transition at the hatch/moonpool.
+auto_sort_on_entry=false
+
+# Cooldown in seconds between auto-sort triggers (prevents repeated fires
+# when entering/exiting moonpool area). Only applies to auto-sort, not N key.
+auto_sort_cooldown=60

@@ -31,6 +31,8 @@ config.SummaryTextScale = 1.0
 config.SummaryTruncate = 15
 config.AutoLabelMax = 0
 config.SortFromTadpole = false
+config.AutoSortOnEntry = false
+config.AutoSortCooldown = 60
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -123,6 +125,10 @@ local function loadConfig()
                     config.AutoLabelMax = tonumber(value) or 0
                 elseif key == "sort_from_tadpole" then
                     config.SortFromTadpole = (value == "true")
+                elseif key == "auto_sort_on_entry" then
+                    config.AutoSortOnEntry = (value == "true")
+                elseif key == "auto_sort_cooldown" then
+                    config.AutoSortCooldown = tonumber(value) or 60
                 end
             end
         end
@@ -150,6 +156,8 @@ local settingsMap = {
     { key = "summary_duration",    field = "SummaryDuration",   type = "number" },
     { key = "auto_label_max",      field = "AutoLabelMax",      type = "number" },
     { key = "sort_from_tadpole",   field = "SortFromTadpole",   type = "boolean" },
+    { key = "auto_sort_on_entry",  field = "AutoSortOnEntry",   type = "boolean" },
+    { key = "auto_sort_cooldown", field = "AutoSortCooldown",  type = "number" },
 }
 
 function config.refreshModSettings()

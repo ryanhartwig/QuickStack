@@ -82,6 +82,14 @@ do
         { key="sort_from_tadpole", title='%s',
           description='%s',
           type="toggle", default=false },
+
+        { key="auto_sort_on_entry", title='%s',
+          description='%s',
+          type="toggle", default=false },
+        { key="auto_sort_cooldown", title='%s',
+          description='%s',
+          type="slider", default=60, min=5, max=300, step=5, format="integer",
+          enabled_by="auto_sort_on_entry" },
     },
 }
 ]=],
@@ -96,7 +104,9 @@ do
         esc(L("summary_title")), esc(L("summary_desc")),
         esc(L("summary_dur_title")), esc(L("summary_dur_desc")),
         esc(L("auto_label_title")), esc(L("auto_label_desc")),
-        esc(L("tadpole_title")), esc(L("tadpole_desc"))
+        esc(L("tadpole_title")), esc(L("tadpole_desc")),
+        esc(L("auto_sort_title")), esc(L("auto_sort_desc")),
+        esc(L("auto_sort_cd_title")), esc(L("auto_sort_cd_desc"))
         )
     end
 
@@ -1019,4 +1029,50 @@ if not restockWithQuickstack and config.KeybindRestock ~= "" then
         registerCooldownBind(bindKeyRestock, doRestockOnly)
         print(string.format("[QuickStack] Restock keybind registered: %s\n", config.KeybindRestock))
     end
+end
+
+-- Auto-sort on base entry: fires once per outside→inside transition
+-- Always registered (fires ~2-4 times per session), config checked in callback
+do
+    local wasInBase = false
+    local lastAutoSort = 0
+    -- Initialize state after game loads
+    ExecuteWithDelay(3000, function()
+        ExecuteInGameThread(function()
+            pcall(function()
+                local vms = FindAllOf("SN2BasePowerViewModel")
+                if vms then
+                    for _, vm in ipairs(vms) do
+                        if vm:IsValid() then
+                            local okP, val = pcall(function() return vm.IsInBase end)
+                            if okP then wasInBase = val end
+                        end
+                    end
+                end
+            end)
+        end)
+    end)
+
+    RegisterCustomEvent("UpdateIsInBase", function(self, inBase)
+        local isInBase = inBase:get()
+        if isInBase and not wasInBase then
+            wasInBase = true
+            config.refreshModSettings()
+            if config.AutoSortOnEntry then
+                local now = os.clock()
+                if now - lastAutoSort >= config.AutoSortCooldown then
+                    lastAutoSort = now
+                    autolabel.suppress = true
+                    doQuickStack()
+                    ExecuteWithDelay(2000, function()
+                        ExecuteInGameThread(function()
+                            autolabel.suppress = false
+                        end)
+                    end)
+                end
+            end
+        else
+            wasInBase = isInBase
+        end
+    end)
 end

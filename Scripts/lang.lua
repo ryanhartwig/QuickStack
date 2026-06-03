@@ -82,6 +82,12 @@ strings.en = {
     tadpole_sourced       = function(n) return string.format("Sorted %d %s from vehicles", n, n == 1 and "item" or "items") end,
     tadpole_title         = "Sort from Tadpole",
     tadpole_desc          = "Pull items from docked tadpole inventories (haul chassis + attached portable lockers) when quick-stacking.",
+
+    -- Auto-sort on entry
+    auto_sort_title       = "Auto-Sort on Base Entry",
+    auto_sort_desc        = "Automatically run quick-stack when entering a base habitat.",
+    auto_sort_cd_title    = "Auto-Sort Cooldown (seconds)",
+    auto_sort_cd_desc     = "Minimum seconds between auto-sort triggers. Prevents repeated fires at moonpool boundaries.",
 }
 
 strings.zh = {
@@ -146,6 +152,12 @@ strings.zh = {
     tadpole_sourced       = function(n) return string.format("从载具中取出 %d 个物品", n) end,
     tadpole_title         = "从蝌蚪号整理",
     tadpole_desc          = "快速堆叠时从停靠的蝌蚪号库存（运输底盘+挂载的便携储物柜）中取出物品。",
+
+    -- Auto-sort on entry
+    auto_sort_title       = "进入基地时自动整理",
+    auto_sort_desc        = "进入基地栖息地时自动运行快速堆叠。",
+    auto_sort_cd_title    = "自动整理冷却时间（秒）",
+    auto_sort_cd_desc     = "自动整理触发之间的最短间隔。防止在月池边界反复触发。",
 }
 
 -----------------------------------------------------------
