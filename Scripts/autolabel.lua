@@ -5,6 +5,7 @@
 
 local UEHelpers = require("UEHelpers")
 local utils = require("utils")
+local network = require("network")
 local config = nil
 local autolabel = {}
 
@@ -74,9 +75,9 @@ function autolabel.init(cfg)
         -- Cache and skip player inventory (covers pulling items out of lockers)
         if not playerInvId then
             pcall(function()
-                local pc = UEHelpers:GetPlayerController()
-                if pc:IsValid() then
-                    playerInvId = pc.Pawn.InventoryComponent.InventoryId
+                local pawn = utils.GetPlayerPawn()
+                if pawn then
+                    playerInvId = pawn.InventoryComponent.InventoryId
                 end
             end)
         end
@@ -142,9 +143,13 @@ function autolabel.init(cfg)
         table.insert(cache.names, newName)
         local newLabel = table.concat(cache.names, ", ")
 
-        -- Set label and sync cache
-        local key = { TagName = FName("None") }
-        pcall(function() ugc:ServerSetPlayerText(key, newLabel) end)
+        -- Set label: host calls directly, clients delegate via network
+        if network.isHost() then
+            local key = { TagName = FName("None") }
+            pcall(function() ugc:ServerSetPlayerText(key, newLabel) end)
+        else
+            network.sendToHost("SETLABEL", tostring(cache.invId) .. "|" .. newLabel)
+        end
         cache.rawLabel = newLabel
     end)
 end

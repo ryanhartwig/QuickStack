@@ -13,6 +13,7 @@ local battery = require("battery")
 local restock = require("restock")
 local ui = require("ui")
 local autolabel = require("autolabel")
+local network = require("network")
 local lang = require("lang")
 local L = lang.L
 
@@ -618,7 +619,13 @@ local function doQuickStack()
     local nearbyLockers, overflowLockers, excludedLockerInvs = utils.discoverNearbyContainers(pawn, radiusUnits, config)
 
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
-    local swapCount = battery.doBatterySwap(pawn, playerInv)
+    -- Clients delegate to host (pull-first swap requires synchronous replication)
+    local swapCount = 0
+    if network.isHost() then
+        swapCount = battery.doBatterySwap(pawn, playerInv)
+    else
+        network.sendToHost("BATSWAP")
+    end
 
     -- Do item stacking
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
@@ -1084,6 +1091,40 @@ if not bindKeyOverflow then
     bindKeyOverflow = Key.H
 end
 registerCooldownBind(bindKeyOverflow, doSortOverflow)
+
+-- Network handlers: host executes operations on behalf of clients
+network.onMessage("BATSWAP", function(senderPC)
+    local ok, pawn = pcall(function() return senderPC.Pawn end)
+    if not ok or not pawn or not pawn:IsValid() then return end
+    local okInv, inv = pcall(function() return pawn.InventoryComponent end)
+    if not okInv or not inv or not inv:IsValid() then return end
+    battery.doBatterySwap(pawn, inv)
+end)
+
+network.onMessage("SETLABEL", function(senderPC, payload)
+    -- payload: lockerIndex|labelText (index into FindAllOf("SN2Locker"))
+    -- Client sends locker inventoryId + label text, host finds locker and sets label
+    local invIdStr, labelText = payload:match("^([^|]+)|(.*)")
+    local targetInvId = tonumber(invIdStr)
+    if not targetInvId or not labelText then return end
+
+    local lockers = FindAllOf("SN2Locker")
+    if not lockers then return end
+    for _, locker in ipairs(lockers) do
+        if locker:IsValid() then
+            local okInv, inv = pcall(function() return locker.Inventory end)
+            if okInv and inv and inv:IsValid() and inv.InventoryId == targetInvId then
+                pcall(function()
+                    local ugc = locker.UGCComponent
+                    if ugc and ugc:IsValid() then
+                        ugc:ServerSetPlayerText({ TagName = FName("None") }, labelText)
+                    end
+                end)
+                break
+            end
+        end
+    end
+end)
 
 -- Restock-only keybind (only registered when configured and different from quickstack key)
 if not restockWithQuickstack and config.KeybindRestock ~= "" then
