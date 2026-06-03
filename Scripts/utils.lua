@@ -15,19 +15,30 @@ function utils.GetDistance(actorA, actorB)
 end
 
 --- Get the player pawn (physical character in the world)
+--- Uses IsLocalPlayerController() to find the correct controller on listen servers,
+--- since UEHelpers:GetPlayerController() can return a remote client's controller.
 ---@return userdata|nil The player pawn actor, or nil if not found
 function utils.GetPlayerPawn()
+    local allPCs = FindAllOf("PlayerController")
+    if allPCs then
+        for _, pc in ipairs(allPCs) do
+            if pc:IsValid() then
+                local okLocal, isLocal = pcall(function() return pc:IsLocalPlayerController() end)
+                if okLocal and isLocal then
+                    local ok, pawn = pcall(function() return pc.Pawn end)
+                    if ok and pawn and pawn:IsValid() then return pawn end
+                end
+            end
+        end
+    end
+    -- Fallback to UEHelpers (single player / no PlayerController found)
     local controller = UEHelpers:GetPlayerController()
-    if not controller:IsValid() then
-        print("[QuickStack] ERROR: Could not get player controller\n")
-        return nil
+    if controller and controller:IsValid() then
+        local ok, pawn = pcall(function() return controller.Pawn end)
+        if ok and pawn and pawn:IsValid() then return pawn end
     end
-    local ok, pawn = pcall(function() return controller.Pawn end)
-    if not ok or not pawn or not pawn:IsValid() then
-        print("[QuickStack] ERROR: Could not get player pawn\n")
-        return nil
-    end
-    return pawn
+    print("[QuickStack] ERROR: Could not get local player pawn\n")
+    return nil
 end
 
 --- Show a notification message to the player using the game's toast system
