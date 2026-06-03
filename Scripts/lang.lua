@@ -77,6 +77,11 @@ strings.en = {
     summary_dur_desc      = "How long the summary panel stays on screen.",
     auto_label_title      = "Auto-Label Max",
     auto_label_desc       = "Auto-name unlabeled lockers when you deposit items. 0 = disabled.",
+
+    -- Vehicle sourcing
+    tadpole_sourced       = function(n) return string.format("Sorted %d %s from vehicles", n, n == 1 and "item" or "items") end,
+    tadpole_title         = "Sort from Tadpole",
+    tadpole_desc          = "Pull items from docked tadpole inventories (haul chassis + attached portable lockers) when quick-stacking.",
 }
 
 strings.zh = {
@@ -136,6 +141,11 @@ strings.zh = {
     summary_dur_desc      = "摘要面板在屏幕上停留的时间。",
     auto_label_title      = "自动标签数量",
     auto_label_desc       = "手动存放物品时自动命名未标记的储物柜。设为0禁用。",
+
+    -- Vehicle sourcing
+    tadpole_sourced       = function(n) return string.format("从载具中取出 %d 个物品", n) end,
+    tadpole_title         = "从蝌蚪号整理",
+    tadpole_desc          = "快速堆叠时从停靠的蝌蚪号库存（运输底盘+挂载的便携储物柜）中取出物品。",
 }
 
 -----------------------------------------------------------

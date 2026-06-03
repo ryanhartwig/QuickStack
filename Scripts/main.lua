@@ -78,6 +78,10 @@ do
         { key="auto_label_max", title='%s',
           description='%s',
           type="slider", default=0, min=0, max=5, step=1, format="integer" },
+
+        { key="sort_from_tadpole", title='%s',
+          description='%s',
+          type="toggle", default=false },
     },
 }
 ]=],
@@ -91,7 +95,8 @@ do
         esc(L("powercell_budget_title")), esc(L("powercell_budget_desc")),
         esc(L("summary_title")), esc(L("summary_desc")),
         esc(L("summary_dur_title")), esc(L("summary_dur_desc")),
-        esc(L("auto_label_title")), esc(L("auto_label_desc"))
+        esc(L("auto_label_title")), esc(L("auto_label_desc")),
+        esc(L("tadpole_title")), esc(L("tadpole_desc"))
         )
     end
 
@@ -364,6 +369,124 @@ local function transferToLockers(playerInv, transferableItems, totalItemsBefore,
     return actualTransferred, numContainers, someFull, transferDetails
 end
 
+--- Route items from tadpole/portable locker source inventories to nearby base lockers.
+--- Called after pass 1 + overflow so locker snapshots reflect current state.
+local function doTadpoleSourcePass(playerInv, nearbyLockers, overflowLockers)
+    local pawn = utils.GetPlayerPawn()
+    if not pawn then return 0, {} end
+
+    local tadpoleInvs = utils.findTadpoleSourceInventories(pawn, utils.MetersToUnits(config.Radius))
+    if #tadpoleInvs == 0 then return 0, {} end
+
+    -- Re-snapshot targets (pass 1 + overflow may have changed counts)
+    local typeData, itemCount, maxItems, labels = utils.snapshotLockerContents(nearbyLockers)
+
+    local overflowItemCount = {}
+    local overflowMaxItems = {}
+    for i, data in ipairs(overflowLockers) do
+        local ok0, max = pcall(function() return data.inventory.MaxItems end)
+        overflowMaxItems[i] = (ok0 and max) or DEFAULT_MAX_ITEMS
+        overflowItemCount[i] = 0
+        local ok, items = pcall(function() return data.inventory:GetItems() end)
+        if ok and items then overflowItemCount[i] = #items end
+    end
+
+    local totalMoved = 0
+    local details = {}
+
+    for _, tadpoleInv in ipairs(tadpoleInvs) do
+        local ok, items = pcall(function() return tadpoleInv:GetItems() end)
+        if not ok or not items then goto nextInv end
+
+        for _, rawItem in ipairs(items) do
+            local s = rawItem:get()
+            local info = readItemInfo(s)
+            if not info then goto nextItem end
+
+            -- Respect category protection flags (same items the player protects shouldn't route from vehicles)
+            local skipItem = false
+            pcall(function()
+                if not config.StackConsumables and categories.getConsumableCategory(info.typeName) then
+                    skipItem = true
+                elseif not config.StackTools and type(info.fullName) == "string" and string.find(string.lower(info.fullName), "/tools/", 1, true) then
+                    skipItem = true
+                elseif not config.StackEquipment then
+                    if categories.isBatteryType(info.typeName) then
+                        skipItem = true
+                    elseif type(info.fullName) == "string" then
+                        local lpath = string.lower(info.fullName)
+                        if string.find(lpath, "/equipment/", 1, true) or string.find(lpath, "/equippable/", 1, true) or string.find(lpath, "/deployables/", 1, true) then
+                            skipItem = true
+                        end
+                    end
+                end
+            end)
+            if skipItem then goto nextItem end
+
+            -- Label + type-count scoring (same as transferToLockers)
+            local bestLabelScore = 0
+            local bestLabelIdx = nil
+            local bestUnlabeledIdx = nil
+            local bestUnlabeledCount = 0
+
+            for i = 1, #nearbyLockers do
+                if itemCount[i] < maxItems[i] then
+                    local labelScore = 0
+                    if labels[i] then
+                        labelScore = scoreLockerMatch(labels[i], info.displayName)
+                        if labelScore > bestLabelScore then
+                            bestLabelScore = labelScore
+                            bestLabelIdx = i
+                        end
+                    end
+                    if labelScore == 0 then
+                        local tc = typeData[i][info.typeName] or 0
+                        if tc > 0 and tc > bestUnlabeledCount then
+                            bestUnlabeledCount = tc
+                            bestUnlabeledIdx = i
+                        end
+                    end
+                end
+            end
+
+            local bestIdx = bestLabelIdx or bestUnlabeledIdx
+
+            if bestIdx then
+                local ok3 = pcall(function()
+                    playerInv:MoveItemBetweenInventories(info.itemId, info.inventoryId, nearbyLockers[bestIdx].inventoryId)
+                end)
+                if ok3 then
+                    typeData[bestIdx][info.typeName] = (typeData[bestIdx][info.typeName] or 0) + 1
+                    itemCount[bestIdx] = itemCount[bestIdx] + 1
+                    totalMoved = totalMoved + 1
+                    utils.recordDetail(details, info.typeName, info.itemType, info.displayName, labels[bestIdx] or "Unlabeled")
+                    goto nextItem
+                end
+            end
+
+            -- Overflow fallback
+            for i, data in ipairs(overflowLockers) do
+                if overflowItemCount[i] < overflowMaxItems[i] then
+                    local ok3 = pcall(function()
+                        playerInv:MoveItemBetweenInventories(info.itemId, info.inventoryId, data.inventoryId)
+                    end)
+                    if ok3 then
+                        overflowItemCount[i] = overflowItemCount[i] + 1
+                        totalMoved = totalMoved + 1
+                        utils.recordDetail(details, info.typeName, info.itemType, info.displayName, data.label or "Overflow")
+                        break
+                    end
+                end
+            end
+
+            ::nextItem::
+        end
+        ::nextInv::
+    end
+
+    return totalMoved, details
+end
+
 --- Quick Stack: transfer matching items to nearby containers + battery swap
 local function doQuickStack()
     local pawn = utils.GetPlayerPawn()
@@ -379,6 +502,7 @@ local function doQuickStack()
     -- Runs first so getTransferableItems sees the post-management inventory.
     local batteryStashCount, batteryPullCount = 0, 0
     local batteryDetails = {}
+    local tadpoleMoved, tadpoleDetails = 0, {}
     local anyBatteryBudget = (config.RestockBatteryCount or 0) > 0 or (config.RestockPowerCellCount or 0) > 0
     if anyBatteryBudget then
         batteryStashCount, batteryPullCount, _, batteryDetails = battery.doBatteryManagement(pawn, playerInv)
@@ -429,9 +553,9 @@ local function doQuickStack()
 
         local batteryActivity = batteryStashCount + batteryPullCount
 
-        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
+        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
             utils.Notify(L("no_match"), config)
-        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 then
+        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 then
             utils.Notify(L("nothing_to_stack"), config)
         else
             local parts = {}
@@ -451,12 +575,16 @@ local function doQuickStack()
             if batteryPullCount > 0 then
                 table.insert(parts, L("battery_pulled", batteryPullCount))
             end
+            if tadpoleMoved > 0 then
+                table.insert(parts, L("tadpole_sourced", tadpoleMoved))
+            end
             if restockCount > 0 then
                 table.insert(parts, L("restocked", restockCount))
             end
             if #parts > 0 then
                 utils.Notify(table.concat(parts, " | "), config)
             end
+            mergeDetails(transferDetails, tadpoleDetails)
             mergeDetails(restockDetails, batteryDetails)
             showTransferSummary(transferDetails, overflowDetails, restockDetails)
         end
@@ -464,13 +592,13 @@ local function doQuickStack()
 
     -- Nothing to do?
     local batteryActivity = batteryStashCount + batteryPullCount
-    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and not restockEnabled then
+    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and not restockEnabled and not config.SortFromTadpole then
         utils.Notify(L("nothing_to_stack"), config)
         return
     end
 
     -- If nothing to stash/swap but restock is enabled, skip straight to restock
-    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled then
+    if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled and not config.SortFromTadpole then
         local restockDetails = restock.execute(playerInv, restockCandidates)
         mergeDetails(restockDetails, batteryDetails)
         local restockCount = 0
@@ -484,8 +612,11 @@ local function doQuickStack()
         return
     end
 
-    -- Finalize: run restock pass then show results
+    -- Finalize: run tadpole source pass, then restock, then show results
     local function finalize(totalTransferred, totalContainers, overflowDetails)
+        if config.SortFromTadpole then
+            tadpoleMoved, tadpoleDetails = doTadpoleSourcePass(playerInv, nearbyLockers, overflowLockers)
+        end
         local restockDetails = restock.execute(playerInv, restockCandidates)
         showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
     end

@@ -84,9 +84,6 @@ function autolabel.init(cfg)
 
         -- Cache: only scan when the target inventory changes (once per new container)
         if hookInvId ~= cache.invId then
-            -- Refresh config on container change so SN2ModSettings slider updates apply
-            config.refreshModSettings()
-
             local _, openInvId, owner = getOpenContainerInfo()
             if openInvId == hookInvId and owner then
                 local currentLabel = utils.getLockerLabel(owner) or ""
@@ -103,7 +100,8 @@ function autolabel.init(cfg)
             end
         end
 
-        -- Config check (after potential refresh)
+        -- Refresh config every fire so SN2ModSettings slider changes apply immediately
+        config.refreshModSettings()
         local maxLabels = config.AutoLabelMax or 0
         if maxLabels <= 0 then return end
 

@@ -90,3 +90,10 @@ summary_position=right
 
 # Summary panel text scale (0.5 = half size, 1.0 = default, 2.0 = double)
 summary_text_scale=1.0
+
+# ── Vehicle Sourcing ──
+
+# Also pull items from docked tadpole inventories (haul chassis, portable lockers
+# attached to hardpoints) and distribute them to nearby base lockers.
+# Only acts as a source — items are never routed INTO tadpole inventories.
+sort_from_tadpole=false

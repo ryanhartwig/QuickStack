@@ -273,6 +273,72 @@ function utils.findAllNearbyInvs(pawn, radiusUnits)
     return invs
 end
 
+--- Tadpole/chassis classes whose hardpoints may have portable lockers attached
+utils.TADPOLE_CLASSES = {
+    BP_Tadpole_C = true,
+    BP_Haul_TadpoleChassis_C = true,
+    BP_ScoutRay_TadpoleChassis_C = true,
+}
+
+--- Find inventories from docked tadpoles/chassis within range.
+--- Returns list of UWEInventoryComponent refs (haul chassis built-in + attached portable lockers).
+--- Detection: locker-side via GetAttachParentActor() (chassis-side AttachedActor is unreliable).
+function utils.findTadpoleSourceInventories(pawn, radiusUnits)
+    local inventories = {}
+    local seen = {}
+
+    -- Haul chassis built-in inventory
+    local haulActors = FindAllOf("BP_Haul_TadpoleChassis_C")
+    if haulActors then
+        for _, actor in ipairs(haulActors) do
+            if actor:IsValid() then
+                local dist = utils.GetDistance(pawn, actor)
+                if dist <= radiusUnits then
+                    local ok, inv = pcall(function() return actor.UWEInventory end)
+                    if ok and inv and inv:IsValid() then
+                        local okId, invId = pcall(function() return inv.InventoryId end)
+                        if okId then
+                            seen[invId] = true
+                            table.insert(inventories, inv)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Portable lockers attached to any tadpole/chassis hardpoint
+    local lockers = FindAllOf("BP_FloatingLocker_Carryable_C")
+    if lockers then
+        for _, locker in ipairs(lockers) do
+            if locker:IsValid() then
+                local dist = utils.GetDistance(pawn, locker)
+                if dist <= radiusUnits then
+                    local okP, parent = pcall(function() return locker:GetAttachParentActor() end)
+                    if okP and parent then
+                        local okV, pValid = pcall(function() return parent:IsValid() end)
+                        if okV and pValid then
+                            local okC, cls = pcall(function() return parent:GetClass():GetFName():ToString() end)
+                            if okC and utils.TADPOLE_CLASSES[cls] then
+                                local ok, inv = pcall(function() return locker.UWEInventory end)
+                                if ok and inv and inv:IsValid() then
+                                    local okId, invId = pcall(function() return inv.InventoryId end)
+                                    if okId and not seen[invId] then
+                                        seen[invId] = true
+                                        table.insert(inventories, inv)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return inventories
+end
+
 --- Default max items per container (fallback when MaxItems property is unavailable)
 utils.DEFAULT_MAX_ITEMS = 30
 
