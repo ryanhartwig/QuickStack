@@ -103,33 +103,86 @@ function battery.doBatterySwap(pawn, playerInv)
 
         if bestIdx then
             local cb = chargerBatteries[bestIdx]
+            local beforeCount = #playerInv:GetItems()
 
-            -- Pull from charger first (frees slot if full), then push player battery in.
-            -- This runs on the host only (synchronous replication). Clients delegate
-            -- the entire swap to the host via network.lua (see main.lua).
-            local beforePull = #playerInv:GetItems()
+            -- Try push-first: works immediately on host and clients with non-full terminals
             pcall(function()
                 playerInv:MoveItemBetweenInventories(
-                    cb.itemId, cb.inventoryId, playerInv.InventoryId)
+                    playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
             end)
-            local afterPull = #playerInv:GetItems()
+            local afterPush = #playerInv:GetItems()
 
-            if afterPull > beforePull then
+            if afterPush < beforeCount then
+                -- Push succeeded (terminal had space), pull charged battery
                 pcall(function()
                     playerInv:MoveItemBetweenInventories(
-                        playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
+                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
                 end)
-                local afterPush = #playerInv:GetItems()
-
-                if afterPush < afterPull then
+                local afterPull = #playerInv:GetItems()
+                if afterPull > afterPush then
                     swapCount = swapCount + 1
                     cb.used = true
                 else
-                    -- Push failed, return charger battery
+                    -- Pull failed, rollback push
                     pcall(function()
                         playerInv:MoveItemBetweenInventories(
-                            cb.itemId, playerInv.InventoryId, cb.inventoryId)
+                            playerBat.itemId, cb.chargerInv.InventoryId, playerBat.inventoryId)
                     end)
+                end
+            else
+                -- Terminal full: pull first to free a slot, then push after replication.
+                -- On host this is synchronous. On clients, poll terminal count until
+                -- the pulled item is removed (replication delay), then push.
+                local termCountBefore = 0
+                pcall(function() termCountBefore = #cb.chargerInv:GetItems() end)
+
+                pcall(function()
+                    playerInv:MoveItemBetweenInventories(
+                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
+                end)
+                local afterPull = #playerInv:GetItems()
+
+                if afterPull > beforeCount then
+                    -- Pull succeeded — try push immediately (works on host)
+                    pcall(function()
+                        playerInv:MoveItemBetweenInventories(
+                            playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
+                    end)
+                    local afterSwap = #playerInv:GetItems()
+
+                    if afterSwap < afterPull then
+                        -- Push worked (host path)
+                        swapCount = swapCount + 1
+                        cb.used = true
+                    else
+                        -- Push failed (client: terminal hasn't replicated yet)
+                        -- Poll terminal count until slot frees up, then push
+                        swapCount = swapCount + 1  -- optimistic
+                        cb.used = true
+                        local pushItemId = playerBat.itemId
+                        local pushInvId = playerBat.inventoryId
+                        local pushTargetInvId = cb.chargerInv.InventoryId
+                        local termInv = cb.chargerInv
+                        local elapsed = 0
+                        local function pollAndPush()
+                            local termCount = 0
+                            pcall(function() termCount = #termInv:GetItems() end)
+                            if termCount < termCountBefore then
+                                -- Terminal replicated, push now
+                                pcall(function()
+                                    playerInv:MoveItemBetweenInventories(pushItemId, pushInvId, pushTargetInvId)
+                                end)
+                            elseif elapsed < 1500 then
+                                elapsed = elapsed + 100
+                                ExecuteWithDelay(100, function()
+                                    ExecuteInGameThread(pollAndPush)
+                                end)
+                            end
+                        end
+                        ExecuteWithDelay(100, function()
+                            ExecuteInGameThread(pollAndPush)
+                        end)
+                    end
                 end
             end
         end

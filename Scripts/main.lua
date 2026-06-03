@@ -619,13 +619,7 @@ local function doQuickStack()
     local nearbyLockers, overflowLockers, excludedLockerInvs = utils.discoverNearbyContainers(pawn, radiusUnits, config)
 
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
-    -- Clients delegate to host (pull-first swap requires synchronous replication)
-    local swapCount = 0
-    if network.isHost() then
-        swapCount = battery.doBatterySwap(pawn, playerInv)
-    else
-        network.sendToHost("BATSWAP")
-    end
+    local swapCount = battery.doBatterySwap(pawn, playerInv)
 
     -- Do item stacking
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
@@ -1093,22 +1087,6 @@ end
 registerCooldownBind(bindKeyOverflow, doSortOverflow)
 
 -- Network handlers: host executes operations on behalf of clients
-network.onMessage("BATSWAP", function(senderPC)
-    print("[QuickStack] BATSWAP received from client\n")
-    local ok, pawn = pcall(function() return senderPC.Pawn end)
-    if not ok or not pawn or not pawn:IsValid() then
-        print("[QuickStack] BATSWAP: sender pawn invalid\n")
-        return
-    end
-    local okInv, inv = pcall(function() return pawn.InventoryComponent end)
-    if not okInv or not inv or not inv:IsValid() then
-        print("[QuickStack] BATSWAP: sender inv invalid\n")
-        return
-    end
-    local count = battery.doBatterySwap(pawn, inv)
-    print(string.format("[QuickStack] BATSWAP: swapped %d for client\n", count))
-end)
-
 network.onMessage("SETLABEL", function(senderPC, payload)
     -- payload: lockerIndex|labelText (index into FindAllOf("SN2Locker"))
     -- Client sends locker inventoryId + label text, host finds locker and sets label
