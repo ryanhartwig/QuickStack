@@ -118,17 +118,19 @@ function autolabel.init(cfg)
         if (config.AutoLabelMax or 0) <= 0 then return end
         if not cache.owner then return end
 
-        -- Staleness check: if the label was manually changed or cleared, re-read it
-        local realLabel = utils.getLockerLabel(cache.owner) or ""
-        if realLabel ~= cache.rawLabel then
-            cache.names = parseNames(realLabel)
-            cache.rawLabel = realLabel
+        local maxLabels = config.AutoLabelMax or 0
+
+        -- Already full: cheapest possible repeat-fire bail -- no item read, no label re-read.
+        -- The client fires this hook many times per transfer while inventory state reconciles
+        -- with the server, so everything past this point must stay cheap.
+        if #cache.names >= maxLabels then
+            if autolabel.debug then
+                print(string.format("[QS-AL] full invId=%s n=%d dt=%.2fms\n", tostring(hookInvId), #cache.names, (os.clock() - t0) * 1000))
+            end
+            return
         end
 
-        -- Check if at max
-        if #cache.names >= (config.AutoLabelMax or 0) then return end
-
-        -- Read the item's display name
+        -- Read the item's display name (needed for dedup)
         local itemStruct = nil
         pcall(function() itemStruct = inventoryItem:get() end)
         if not itemStruct then return end
@@ -137,7 +139,10 @@ function autolabel.init(cfg)
         if not info then return end
         local newName = info.displayName
 
-        -- Check if this name is already in the cached names
+        -- Dedup against the names we've already ensured. We trust our own grown set, NOT a
+        -- re-read of the locker label: on clients the label lags behind until the host's SET
+        -- replicates back, so re-reading would wipe our set and re-send a SETLABEL on EVERY
+        -- hook fire (the ~85x/transfer client stutter that this whole module was choking on).
         for _, existing in ipairs(cache.names) do
             if existing == newName then
                 if autolabel.debug then
@@ -145,6 +150,19 @@ function autolabel.init(cfg)
                 end
                 return
             end
+        end
+
+        -- Genuinely new name. Merge in any names the player typed manually (grow-only, never
+        -- shrink) so we don't clobber a manual edit, then re-check max/dedup before committing.
+        local realNames = parseNames(utils.getLockerLabel(cache.owner) or "")
+        for _, rn in ipairs(realNames) do
+            local known = false
+            for _, e in ipairs(cache.names) do if e == rn then known = true break end end
+            if not known then table.insert(cache.names, rn) end
+        end
+        if #cache.names >= maxLabels then return end
+        for _, existing in ipairs(cache.names) do
+            if existing == newName then return end
         end
 
         -- Get UGCComponent from the owning actor
