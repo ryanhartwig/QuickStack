@@ -109,6 +109,10 @@ function autolabel.init(cfg)
             if openInvId == hookInvId and owner then
                 local currentLabel = utils.getLockerLabel(owner) or ""
                 cache = { invId = hookInvId, owner = owner, names = parseNames(currentLabel), rawLabel = currentLabel }
+                if autolabel.debug then
+                    print(string.format("[QS-AL] seed invId=%s label=%q seededN=%d\n",
+                        tostring(hookInvId), currentLabel, #cache.names))
+                end
             else
                 cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
                 return
@@ -125,7 +129,7 @@ function autolabel.init(cfg)
         -- with the server, so everything past this point must stay cheap.
         if #cache.names >= maxLabels then
             if autolabel.debug then
-                print(string.format("[QS-AL] full invId=%s n=%d dt=%.2fms\n", tostring(hookInvId), #cache.names, (os.clock() - t0) * 1000))
+                print(string.format("[QS-AL] full invId=%s n=%d max=%d dt=%.2fms\n", tostring(hookInvId), #cache.names, maxLabels, (os.clock() - t0) * 1000))
             end
             return
         end
@@ -146,7 +150,7 @@ function autolabel.init(cfg)
         for _, existing in ipairs(cache.names) do
             if existing == newName then
                 if autolabel.debug then
-                    print(string.format("[QS-AL] dup invId=%s dt=%.2fms\n", tostring(hookInvId), (os.clock() - t0) * 1000))
+                    print(string.format("[QS-AL] dup invId=%s name=%s n=%d max=%d dt=%.2fms\n", tostring(hookInvId), newName, #cache.names, maxLabels, (os.clock() - t0) * 1000))
                 end
                 return
             end
@@ -185,8 +189,8 @@ function autolabel.init(cfg)
         cache.rawLabel = newLabel
 
         if autolabel.debug then
-            print(string.format("[QS-AL] SET invId=%s name=%s host=%s dt=%.2fms\n",
-                tostring(hookInvId), newName, tostring(network.isHost()), (os.clock() - t0) * 1000))
+            print(string.format("[QS-AL] SET invId=%s name=%s n=%d max=%d host=%s dt=%.2fms\n",
+                tostring(hookInvId), newName, #cache.names, maxLabels, tostring(network.isHost()), (os.clock() - t0) * 1000))
         end
     end)
 end
