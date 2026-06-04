@@ -201,6 +201,30 @@ function config.refreshModSettings()
     end
 end
 
+--- Refresh a single SN2ModSettings value by config key. Cheap -- one GetSharedVariable
+--- call -- for hot paths (e.g. the auto-label hook) where a full refreshModSettings
+--- (one cross-mod call per setting, ~25) would stutter the game thread.
+function config.refreshOne(key)
+    if not ModRef then return end
+    for _, entry in ipairs(settingsMap) do
+        if entry.key == key then
+            local ok, val = pcall(function()
+                return ModRef:GetSharedVariable("SN2ModSettings/QuickStack/" .. entry.key)
+            end)
+            if ok and val ~= nil and type(val) == entry.type then
+                if entry.type == "number" and not entry.raw then
+                    val = math.floor(val + 0.5)
+                end
+                if entry.transform then
+                    val = entry.transform(val)
+                end
+                config[entry.field] = val
+            end
+            return
+        end
+    end
+end
+
 config.refreshModSettings()
 
 return config

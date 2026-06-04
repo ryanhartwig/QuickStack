@@ -67,6 +67,13 @@ function autolabel.init(cfg)
     RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
         if autolabel.suppress then return end
 
+        -- Cheap early-out when auto-label is disabled. Uses the cached config value,
+        -- which is refreshed on every QuickStack keybind press (registerCooldownBind) and
+        -- once per container open below -- so we never touch SN2ModSettings on this hot
+        -- path while disabled. This hook fires ~10x per transfer, so per-fire cross-mod
+        -- reads (the old refreshModSettings here) froze the game thread.
+        if (config.AutoLabelMax or 0) <= 0 then return end
+
         -- Get the hook's inventory ID (cheap)
         local hookInvId = nil
         pcall(function() hookInvId = inventoryId:get() end)
@@ -85,6 +92,13 @@ function autolabel.init(cfg)
 
         -- Cache: only scan when the target inventory changes (once per new container)
         if hookInvId ~= cache.invId then
+            -- Pick up a live auto_label_max slider change cheaply (one cross-mod read),
+            -- once per container -- not a full refreshModSettings on every hook fire.
+            config.refreshOne("auto_label_max")
+            if (config.AutoLabelMax or 0) <= 0 then
+                cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
+                return
+            end
             local _, openInvId, owner = getOpenContainerInfo()
             if openInvId == hookInvId and owner then
                 local currentLabel = utils.getLockerLabel(owner) or ""
@@ -101,8 +115,6 @@ function autolabel.init(cfg)
             end
         end
 
-        -- Refresh config every fire so SN2ModSettings slider changes apply immediately
-        config.refreshModSettings()
         local maxLabels = config.AutoLabelMax or 0
         if maxLabels <= 0 then return end
 
