@@ -10,7 +10,7 @@ local config = nil
 local autolabel = {}
 
 autolabel.suppress = false  -- set by main.lua during automated operations
-autolabel.debug = true      -- timing instrumentation; set false / remove before release
+autolabel.debug = false     -- timing instrumentation; set false / remove before release
 
 --- Get the open container's InventoryComponent, its InventoryId, and the owning actor.
 --- Returns invComp, invId, ownerActor or nil, nil, nil.

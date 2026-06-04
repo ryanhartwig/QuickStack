@@ -1127,8 +1127,12 @@ end
 -- Always registered (fires ~2-4 times per session), config checked in callback
 do
     local wasInBase = false
+    local initialized = false
     local lastAutoSort = 0
-    -- Initialize state after game loads
+    -- Initialize state after game loads. Until this completes, UpdateIsInBase only
+    -- tracks state and never triggers a sort -- otherwise the outside->inside transition
+    -- that fires while joining/loading into a base is misread as a deliberate entry and
+    -- auto-sorts your inventory on join.
     ExecuteWithDelay(3000, function()
         ExecuteInGameThread(function()
             pcall(function()
@@ -1142,11 +1146,14 @@ do
                     end
                 end
             end)
+            initialized = true
         end)
     end)
 
     RegisterCustomEvent("UpdateIsInBase", function(self, inBase)
         local isInBase = inBase:get()
+        -- Swallow transitions during the startup window (join/load) -- just track state.
+        if not initialized then wasInBase = isInBase; return end
         if isInBase and not wasInBase then
             wasInBase = true
             config.refreshModSettings()
