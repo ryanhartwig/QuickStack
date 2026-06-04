@@ -19,6 +19,39 @@ function battery.init(cfg)
     config = cfg
 end
 
+--- Get the world inventory subsystem (server-authoritative inventory registry).
+local function getInventorySubsystem(playerInv)
+    local ss = nil
+    pcall(function() ss = playerInv:GetInventorySubsystem() end)
+    if ss and ss:IsValid() then return ss end
+    ss = FindFirstOf("UWEInventorySubsystem")
+    if ss and ss:IsValid() then return ss end
+    return nil
+end
+
+--- Swap a depleted player battery for a charged terminal battery via the inventory
+--- subsystem. Unlike UWEInventoryComponent:MoveItemBetweenInventories, the subsystem move
+--- is server-authoritative and does NOT gate on the client's stale local fullness view --
+--- so it works for FULL terminals on non-host clients (QuickStack #7, verified host+client).
+--- Pulls the charged battery first to free a real slot, then pushes the depleted one in.
+--- Returns true on a completed swap.
+local function subsystemTerminalSwap(playerInv, pullItemId, terminalInvId, pushItemId)
+    local ss = getInventorySubsystem(playerInv)
+    if not ss then return false end
+    local playerInvId = playerInv.InventoryId
+    local pullOk = false
+    pcall(function() pullOk = ss:MoveInventoryItem(pullItemId, terminalInvId, playerInvId) end)
+    if not pullOk then return false end
+    local pushOk = false
+    pcall(function() pushOk = ss:MoveInventoryItem(pushItemId, playerInvId, terminalInvId) end)
+    if not pushOk then
+        -- Push rejected: return the charged battery so we don't leave a free pull behind.
+        pcall(function() ss:MoveInventoryItem(pullItemId, playerInvId, terminalInvId) end)
+        return false
+    end
+    return true
+end
+
 --- Battery swap: for each battery/power cell in player inventory,
 --- check nearby chargers for a higher-charge replacement and swap
 function battery.doBatterySwap(pawn, playerInv)
@@ -130,59 +163,14 @@ function battery.doBatterySwap(pawn, playerInv)
                     end)
                 end
             else
-                -- Terminal full: pull first to free a slot, then push after replication.
-                -- On host this is synchronous. On clients, poll terminal count until
-                -- the pulled item is removed (replication delay), then push.
-                local termCountBefore = 0
-                pcall(function() termCountBefore = #cb.chargerInv:GetItems() end)
-
-                pcall(function()
-                    playerInv:MoveItemBetweenInventories(
-                        cb.itemId, cb.inventoryId, playerInv.InventoryId)
-                end)
-                local afterPull = #playerInv:GetItems()
-
-                if afterPull > beforeCount then
-                    -- Pull succeeded — try push immediately (works on host)
-                    pcall(function()
-                        playerInv:MoveItemBetweenInventories(
-                            playerBat.itemId, playerBat.inventoryId, cb.chargerInv.InventoryId)
-                    end)
-                    local afterSwap = #playerInv:GetItems()
-
-                    if afterSwap < afterPull then
-                        -- Push worked (host path)
-                        swapCount = swapCount + 1
-                        cb.used = true
-                    else
-                        -- Push failed (client: terminal hasn't replicated yet)
-                        -- Poll terminal count until slot frees up, then push
-                        swapCount = swapCount + 1  -- optimistic
-                        cb.used = true
-                        local pushItemId = playerBat.itemId
-                        local pushInvId = playerBat.inventoryId
-                        local pushTargetInvId = cb.chargerInv.InventoryId
-                        local termInv = cb.chargerInv
-                        local elapsed = 0
-                        local function pollAndPush()
-                            local termCount = 0
-                            pcall(function() termCount = #termInv:GetItems() end)
-                            if termCount < termCountBefore then
-                                -- Terminal replicated, push now
-                                pcall(function()
-                                    playerInv:MoveItemBetweenInventories(pushItemId, pushInvId, pushTargetInvId)
-                                end)
-                            elseif elapsed < 1500 then
-                                elapsed = elapsed + 100
-                                ExecuteWithDelay(100, function()
-                                    ExecuteInGameThread(pollAndPush)
-                                end)
-                            end
-                        end
-                        ExecuteWithDelay(100, function()
-                            ExecuteInGameThread(pollAndPush)
-                        end)
-                    end
+                -- Terminal full: the push-first attempt above no-ops on a full terminal
+                -- (and silently no-ops on non-host clients regardless). Swap via the
+                -- inventory subsystem instead -- server-authoritative, bypasses the
+                -- client's stale local fullness gate. Pull the charged battery first to
+                -- free a slot, then push the depleted one in (QuickStack #7).
+                if subsystemTerminalSwap(playerInv, cb.itemId, cb.inventoryId, playerBat.itemId) then
+                    swapCount = swapCount + 1
+                    cb.used = true
                 end
             end
         end
@@ -314,37 +302,23 @@ function battery.doBatteryManagement(pawn, playerInv)
                     end
                     if bestIdx then
                         local tb = termBatteries[bestIdx]
-                        local beforePull = #playerInv:GetItems()
-                        pcall(function()
-                            playerInv:MoveItemBetweenInventories(
-                                tb.itemId, tb.inventoryId, playerInvId)
-                        end)
-                        local afterPull = #playerInv:GetItems()
-                        if afterPull > beforePull then
-                            pcall(function()
-                                playerInv:MoveItemBetweenInventories(
-                                    bat.itemId, bat.inventoryId, tb.terminalInv.InventoryId)
-                            end)
-                            local afterPush = #playerInv:GetItems()
-                            if afterPush < afterPull then
-                                stashCount = stashCount + 1
-                                utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
-                                tb.used = true
-                                placed = true
-                                table.insert(unplaced, {
-                                    typeName = tb.typeName,
-                                    displayName = tb.displayName,
-                                    itemType = tb.itemType,
-                                    itemId = tb.itemId,
-                                    inventoryId = playerInvId,
-                                    count = tb.count,
-                                })
-                            else
-                                pcall(function()
-                                    playerInv:MoveItemBetweenInventories(
-                                        tb.itemId, playerInvId, tb.inventoryId)
-                                end)
-                            end
+                        -- Full terminal: swap via the inventory subsystem (server-
+                        -- authoritative, works on non-host clients). Pull the charged
+                        -- battery out, push the depleted one in. The displaced battery
+                        -- then sits in player inv and is routed to a locker below.
+                        if subsystemTerminalSwap(playerInv, tb.itemId, tb.terminalInv.InventoryId, bat.itemId) then
+                            stashCount = stashCount + 1
+                            utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
+                            tb.used = true
+                            placed = true
+                            table.insert(unplaced, {
+                                typeName = tb.typeName,
+                                displayName = tb.displayName,
+                                itemType = tb.itemType,
+                                itemId = tb.itemId,
+                                inventoryId = playerInvId,
+                                count = tb.count,
+                            })
                         end
                     end
                 end
