@@ -52,6 +52,21 @@ local function subsystemTerminalSwap(playerInv, pullItemId, terminalInvId, pushI
     return true
 end
 
+--- Move one item between inventories. Prefers the server-authoritative subsystem
+--- (real bool return, bypasses the client's stale local fullness gate); falls back to
+--- the component path with player-inventory count verification if the subsystem is
+--- unavailable. Returns true on a completed move.
+local function moveItem(ss, playerInv, itemId, fromId, toId)
+    if ss then
+        local ok = false
+        pcall(function() ok = ss:MoveInventoryItem(itemId, fromId, toId) end)
+        return ok == true
+    end
+    local before = #playerInv:GetItems()
+    pcall(function() playerInv:MoveItemBetweenInventories(itemId, fromId, toId) end)
+    return #playerInv:GetItems() ~= before
+end
+
 --- Battery swap: for each battery/power cell in player inventory,
 --- check nearby chargers for a higher-charge replacement and swap
 function battery.doBatterySwap(pawn, playerInv)
@@ -264,116 +279,74 @@ function battery.doBatteryManagement(pawn, playerInv)
         end
     end
 
-    -- Phase 1: Stash excess for each group
+    -- Keep the BEST `budget` batteries of each kind in the player's inventory and send
+    -- the rest to the terminal. We rank player-held and terminal batteries together in
+    -- one pool, so a low-charge held battery gets upgraded even when the player is UNDER
+    -- budget (e.g. holding 1 depleted battery, budget 3, terminal full of full batteries
+    -- -> the player ends with the 3 best and the depleted one goes to the terminal).
+    -- Moves go through the server-authoritative subsystem so they work on non-host
+    -- clients (no stale local-fullness gating, real bool return -- see QuickStack #7).
+    local ss = getInventorySubsystem(playerInv)
     for _, group in ipairs(groups) do
-        if #group.items > group.budget then
-            table.sort(group.items, function(a, b) return a.chargePercent < b.chargePercent end)
-            local toStash = #group.items - group.budget
-
-            for i = 1, toStash do
-                local bat = group.items[i]
-                -- Try direct stash first (terminal has space, matching type)
-                local placed = false
-                local beforeCount = #playerInv:GetItems()
-                for _, term in ipairs(terminalInvs) do
-                    if term.forPowerCell == group.isPowerCell then
-                        pcall(function()
-                            playerInv:MoveItemBetweenInventories(bat.itemId, bat.inventoryId, term.inv.InventoryId)
-                        end)
-                        local afterCount = #playerInv:GetItems()
-                        if afterCount < beforeCount then
-                            stashCount = stashCount + 1
-                            utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
-                            placed = true
-                            break
-                        end
-                    end
-                end
-                -- Terminal full: swap with highest-charge terminal battery of same type.
-                -- Pull from terminal first (frees a slot), then push player battery in.
-                if not placed then
-                    local bestIdx = nil
-                    local bestCharge = bat.chargePercent
-                    for j, tb in ipairs(termBatteries) do
-                        if not tb.used and tb.typeName == bat.typeName and tb.forPowerCell == group.isPowerCell and tb.chargePercent > bestCharge then
-                            bestCharge = tb.chargePercent
-                            bestIdx = j
-                        end
-                    end
-                    if bestIdx then
-                        local tb = termBatteries[bestIdx]
-                        -- Full terminal: swap via the inventory subsystem (server-
-                        -- authoritative, works on non-host clients). Pull the charged
-                        -- battery out, push the depleted one in. The displaced battery
-                        -- then sits in player inv and is routed to a locker below.
-                        if subsystemTerminalSwap(playerInv, tb.itemId, tb.terminalInv.InventoryId, bat.itemId) then
-                            stashCount = stashCount + 1
-                            utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
-                            tb.used = true
-                            placed = true
-                            table.insert(unplaced, {
-                                typeName = tb.typeName,
-                                displayName = tb.displayName,
-                                itemType = tb.itemType,
-                                itemId = tb.itemId,
-                                inventoryId = playerInvId,
-                                count = tb.count,
-                            })
-                        end
-                    end
-                end
-                if not placed then
-                    table.insert(unplaced, bat)
-                end
-            end
-        end
-    end
-
-    -- Phase 2: Pull best batteries from Terminal if player needs more (per type)
-    playerItems = playerInv:GetItems()
-    for _, group in ipairs(groups) do
-        -- Count how many of this type the player currently holds
-        local currentCount = 0
-        for _, item in ipairs(playerItems) do
-            local s = item:get()
-            local typeName = readItemTypeName(s)
-            if typeName and isBatteryType(typeName) and (isPowerCellType(typeName) == group.isPowerCell) then
-                currentCount = currentCount + 1
+        -- Terminal batteries available to this kind (unused, matching battery/power-cell)
+        local termGroup = {}
+        for _, tb in ipairs(termBatteries) do
+            if not tb.used and tb.forPowerCell == group.isPowerCell then
+                table.insert(termGroup, tb)
             end
         end
 
-        if currentCount < group.budget then
-            local needed = group.budget - currentCount
-            local pullCandidates = {}
+        -- Combined pool ranked highest charge first. On ties, player-held batteries sort
+        -- first so we don't churn equal-charge batteries between player and terminal.
+        local pool = {}
+        for _, b in ipairs(group.items) do
+            table.insert(pool, { info = b, origin = "player", charge = b.chargePercent })
+        end
+        for _, tb in ipairs(termGroup) do
+            table.insert(pool, { info = tb, origin = "terminal", charge = tb.chargePercent })
+        end
+        table.sort(pool, function(a, b)
+            if a.charge ~= b.charge then return a.charge > b.charge end
+            return a.origin == "player" and b.origin ~= "player"
+        end)
+
+        -- Classify: terminal batteries inside the top `budget` get pulled to the player;
+        -- player batteries outside it get stashed to the terminal.
+        local toPull, toStash = {}, {}
+        for rank, entry in ipairs(pool) do
+            if rank <= group.budget then
+                if entry.origin == "terminal" then table.insert(toPull, entry.info) end
+            elseif entry.origin == "player" then
+                table.insert(toStash, entry.info)
+            end
+        end
+
+        -- Pull first: brings the best batteries in and frees terminal slots for stashing.
+        for _, tb in ipairs(toPull) do
+            if moveItem(ss, playerInv, tb.itemId, tb.inventoryId, playerInvId) then
+                pullCount = pullCount + 1
+                tb.used = true
+                utils.recordDetail(batteryDetails, tb.typeName, tb.itemType, tb.displayName, "Terminal")
+            end
+        end
+
+        -- Then stash the excess, lower-charge player batteries into a matching terminal
+        -- (now has freed slots). If no terminal accepts it, leave it in inventory -- the
+        -- normal quickstack pass routes it to a locker.
+        for _, bat in ipairs(toStash) do
+            local placed = false
             for _, term in ipairs(terminalInvs) do
                 if term.forPowerCell == group.isPowerCell then
-                    local ok, items = pcall(function() return term.inv:GetItems() end)
-                    if ok and items then
-                        for _, item in ipairs(items) do
-                            local s = item:get()
-                            local info = readItemInfo(s)
-                            if info and isBatteryType(info.typeName) then
-                                local current, max = readCharge(s)
-                                info.chargePercent = (current and max and max > 0) and (current / max) or 0
-                                table.insert(pullCandidates, info)
-                            end
-                        end
+                    if moveItem(ss, playerInv, bat.itemId, bat.inventoryId, term.inv.InventoryId) then
+                        stashCount = stashCount + 1
+                        utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
+                        placed = true
+                        break
                     end
                 end
             end
-
-            table.sort(pullCandidates, function(a, b) return a.chargePercent > b.chargePercent end)
-            local pulled = 0
-            for _, bat in ipairs(pullCandidates) do
-                if pulled >= needed then break end
-                local ok = pcall(function()
-                    playerInv:MoveItemBetweenInventories(bat.itemId, bat.inventoryId, playerInvId)
-                end)
-                if ok then
-                    pulled = pulled + 1
-                    pullCount = pullCount + 1
-                    utils.recordDetail(batteryDetails, bat.typeName, bat.itemType, bat.displayName, "Terminal")
-                end
+            if not placed then
+                table.insert(unplaced, bat)
             end
         end
     end
