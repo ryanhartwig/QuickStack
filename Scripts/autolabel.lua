@@ -10,6 +10,7 @@ local config = nil
 local autolabel = {}
 
 autolabel.suppress = false  -- set by main.lua during automated operations
+autolabel.debug = true      -- timing instrumentation; set false / remove before release
 
 --- Get the open container's InventoryComponent, its InventoryId, and the owning actor.
 --- Returns invComp, invId, ownerActor or nil, nil, nil.
@@ -56,9 +57,11 @@ end
 function autolabel.init(cfg)
     config = cfg
 
-    -- Cache: one getOpenContainerInfo() call per container, not per hook fire.
-    -- Also caches parsed label state to avoid repeated getLockerLabel + parsing.
-    -- Cache invalidates when a different inventoryId is seen (player opens a different container).
+    -- Cache: one getOpenContainerInfo() scan per container, not per hook fire.
+    -- The hook's `self` is the component that PROCESSES the add (often the player's
+    -- inventory component) -- NOT the destination locker -- so the locker can only be
+    -- resolved by matching inventoryId against the open container. Cache invalidates when
+    -- a different inventoryId is seen (player opens a different container).
     local cache = { invId = nil, owner = nil, names = nil, rawLabel = nil }
 
     -- Cache player inventory ID to skip hook fires for player inventory (item pulls)
@@ -67,14 +70,9 @@ function autolabel.init(cfg)
     RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
         if autolabel.suppress then return end
 
-        -- Cheap early-out when auto-label is disabled. Uses the cached config value,
-        -- which is refreshed on every QuickStack keybind press (registerCooldownBind) and
-        -- once per container open below -- so we never touch SN2ModSettings on this hot
-        -- path while disabled. This hook fires ~10x per transfer, so per-fire cross-mod
-        -- reads (the old refreshModSettings here) froze the game thread.
-        if (config.AutoLabelMax or 0) <= 0 then return end
+        local t0 = autolabel.debug and os.clock() or 0
 
-        -- Get the hook's inventory ID (cheap)
+        -- Get the hook's destination inventory ID (cheap)
         local hookInvId = nil
         pcall(function() hookInvId = inventoryId:get() end)
         if not hookInvId then return end
@@ -90,35 +88,34 @@ function autolabel.init(cfg)
         end
         if hookInvId == playerInvId then return end
 
-        -- Cache: only scan when the target inventory changes (once per new container)
+        -- Scan only when the target inventory changes (once per container). The refresh
+        -- runs HERE -- before any disabled bail -- so a stale-0 auto_label_max (e.g. the
+        -- first-boot SN2ModSettings default) self-heals instead of permanently bailing.
         if hookInvId ~= cache.invId then
-            -- Pick up a live auto_label_max slider change cheaply (one cross-mod read),
-            -- once per container -- not a full refreshModSettings on every hook fire.
             config.refreshOne("auto_label_max")
             if (config.AutoLabelMax or 0) <= 0 then
                 cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
+                if autolabel.debug then
+                    print(string.format("[QS-AL] disabled invId=%s dt=%.2fms\n", tostring(hookInvId), (os.clock() - t0) * 1000))
+                end
                 return
             end
+            local ts = autolabel.debug and os.clock() or 0
             local _, openInvId, owner = getOpenContainerInfo()
+            if autolabel.debug then
+                print(string.format("[QS-AL] scan invId=%s open=%s match=%s scanDt=%.2fms\n",
+                    tostring(hookInvId), tostring(openInvId), tostring(openInvId == hookInvId), (os.clock() - ts) * 1000))
+            end
             if openInvId == hookInvId and owner then
                 local currentLabel = utils.getLockerLabel(owner) or ""
-                local names = parseNames(currentLabel)
-                cache = {
-                    invId = hookInvId,
-                    owner = owner,
-                    names = names,
-                    rawLabel = currentLabel,
-                }
+                cache = { invId = hookInvId, owner = owner, names = parseNames(currentLabel), rawLabel = currentLabel }
             else
                 cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
                 return
             end
         end
 
-        local maxLabels = config.AutoLabelMax or 0
-        if maxLabels <= 0 then return end
-
-        -- Fast bail: not a valid target
+        if (config.AutoLabelMax or 0) <= 0 then return end
         if not cache.owner then return end
 
         -- Staleness check: if the label was manually changed or cleared, re-read it
@@ -129,7 +126,7 @@ function autolabel.init(cfg)
         end
 
         -- Check if at max
-        if #cache.names >= maxLabels then return end
+        if #cache.names >= (config.AutoLabelMax or 0) then return end
 
         -- Read the item's display name
         local itemStruct = nil
@@ -142,7 +139,12 @@ function autolabel.init(cfg)
 
         -- Check if this name is already in the cached names
         for _, existing in ipairs(cache.names) do
-            if existing == newName then return end
+            if existing == newName then
+                if autolabel.debug then
+                    print(string.format("[QS-AL] dup invId=%s dt=%.2fms\n", tostring(hookInvId), (os.clock() - t0) * 1000))
+                end
+                return
+            end
         end
 
         -- Get UGCComponent from the owning actor
@@ -163,6 +165,11 @@ function autolabel.init(cfg)
             network.sendToHost("SETLABEL", tostring(cache.invId) .. "|" .. newLabel)
         end
         cache.rawLabel = newLabel
+
+        if autolabel.debug then
+            print(string.format("[QS-AL] SET invId=%s name=%s host=%s dt=%.2fms\n",
+                tostring(hookInvId), newName, tostring(network.isHost()), (os.clock() - t0) * 1000))
+        end
     end)
 end
 
