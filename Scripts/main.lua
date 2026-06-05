@@ -23,7 +23,7 @@ restock.init(config)
 ui.init(config)
 autolabel.init(config)
 
-local VERSION = "3.3.3"
+local VERSION = "4.0.0"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
