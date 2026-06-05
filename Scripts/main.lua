@@ -1126,34 +1126,22 @@ end
 -- Auto-sort on base entry: fires once per outside→inside transition
 -- Always registered (fires ~2-4 times per session), config checked in callback
 do
-    local wasInBase = false
-    local initialized = false
+    -- Arm wasInBase=true so the FIRST UpdateIsInBase after a world load is treated as the
+    -- spawn/join, not a deliberate entry. If you actually load OUTSIDE a base, the base-power
+    -- VM fires (false) and self-corrects below; a real outside->inside walk then fires the sort.
+    -- This must re-arm on every world load (initial, save reload, AND client joining a session)
+    -- -- a startup-only timer doesn't, because an MP client joins minutes after the mod loads,
+    -- long after any startup window, so the join transition would auto-sort/restock on join.
+    local wasInBase = true
     local lastAutoSort = 0
-    -- Initialize state after game loads. Until this completes, UpdateIsInBase only
-    -- tracks state and never triggers a sort -- otherwise the outside->inside transition
-    -- that fires while joining/loading into a base is misread as a deliberate entry and
-    -- auto-sorts your inventory on join.
-    ExecuteWithDelay(3000, function()
-        ExecuteInGameThread(function()
-            pcall(function()
-                local vms = FindAllOf("SN2BasePowerViewModel")
-                if vms then
-                    for _, vm in ipairs(vms) do
-                        if vm:IsValid() then
-                            local okP, val = pcall(function() return vm.IsInBase end)
-                            if okP then wasInBase = val end
-                        end
-                    end
-                end
-            end)
-            initialized = true
-        end)
+
+    -- Lua-flag only -- safe inside the map-load teardown hook (NO UObject access here).
+    RegisterLoadMapPostHook(function()
+        wasInBase = true
     end)
 
     RegisterCustomEvent("UpdateIsInBase", function(self, inBase)
         local isInBase = inBase:get()
-        -- Swallow transitions during the startup window (join/load) -- just track state.
-        if not initialized then wasInBase = isInBase; return end
         if isInBase and not wasInBase then
             wasInBase = true
             config.refreshModSettings()
