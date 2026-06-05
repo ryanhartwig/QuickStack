@@ -238,15 +238,6 @@ local keyMap = {
     F5 = Key.F5, F6 = Key.F6, F7 = Key.F7, F8 = Key.F8,
 }
 
-local bindKey = keyMap[config.Keybind]
-if not bindKey then
-    print(string.format("[QuickStack] ERROR: Unknown keybind '%s', defaulting to N\n", config.Keybind))
-    bindKey = Key.N
-end
-
--- Restock runs with quickstack unless a separate restock keybind is configured
-local restockWithQuickstack = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
-
 -- Cooldown state
 local lastActivation = 0
 
@@ -627,6 +618,9 @@ local function doQuickStack()
         actualTransferred, numContainers, someFull, transferDetails = transferToLockers(
             playerInv, transferableItems, totalItemsBefore, nearbyLockers)
     end
+
+    -- Restock runs with quickstack unless a separate restock keybind is configured
+    local restockWithQuickstack = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
 
     -- Build restock candidates from all nearby locker inventories
     local restockCandidates = {}
@@ -1048,17 +1042,47 @@ if config.LabelMaxChars and config.LabelMaxChars > 0 then
     end)
 end
 
--- Keybind helper: wraps action in cooldown + text-input guard
-local function registerCooldownBind(key, actionFn)
-    RegisterKeyBind(key, function()
+-- Dynamic keybind dispatch: register ALL possible keys, dispatch by current config.
+-- UE4SS has no UnregisterKeyBind, so static registration can't adapt to SN2ModSettings
+-- changes. Instead, every key in keyMap gets a handler that does an O(1) table lookup.
+-- Unbound keys hit nil and return instantly — no ExecuteInGameThread, no overhead.
+local activeBindings = {}  -- keyStr -> actionFn
+
+local function rebuildBindings()
+    activeBindings = {}
+    -- Priority order: first bind wins if user accidentally assigns the same key twice
+    local function bind(keyStr, action)
+        if keyStr and keyStr ~= "" and not activeBindings[keyStr] then
+            activeBindings[keyStr] = action
+        end
+    end
+    bind(config.Keybind, doQuickStack)
+    bind(config.KeybindOpen, doQuickStackOpen)
+    bind(config.KeybindOverflow, doSortOverflow)
+    local rws = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
+    if not rws then
+        bind(config.KeybindRestock, doRestockOnly)
+    end
+end
+
+rebuildBindings()
+
+for keyStr, keyConst in pairs(keyMap) do
+    RegisterKeyBind(keyConst, function()
+        local action = activeBindings[keyStr]
+        if not action then return end
         ExecuteInGameThread(function()
             if isTextInputFocused() then return end
             local now = os.clock()
             if now - lastActivation < config.Cooldown then return end
             lastActivation = now
             config.refreshModSettings()
+            rebuildBindings()
+            -- Re-check: key might no longer be bound after settings refresh
+            action = activeBindings[keyStr]
+            if not action then return end
             autolabel.suppress = true
-            actionFn()
+            action()
             -- Delay clearing to cover async callbacks (waitForReplication)
             ExecuteWithDelay(2000, function()
                 ExecuteInGameThread(function()
@@ -1069,22 +1093,15 @@ local function registerCooldownBind(key, actionFn)
     end)
 end
 
--- Keybind registration (config.txt only — keybinds are set-and-forget)
-registerCooldownBind(bindKey, doQuickStack)
-
-local bindKeyOpen = keyMap[config.KeybindOpen]
-if not bindKeyOpen then
-    print(string.format("[QuickStack] ERROR: Unknown keybind_open '%s', defaulting to G\n", config.KeybindOpen))
-    bindKeyOpen = Key.G
-end
-registerCooldownBind(bindKeyOpen, doQuickStackOpen)
-
-local bindKeyOverflow = keyMap[config.KeybindOverflow]
-if not bindKeyOverflow then
-    print(string.format("[QuickStack] ERROR: Unknown keybind_overflow '%s', defaulting to H\n", config.KeybindOverflow))
-    bindKeyOverflow = Key.H
-end
-registerCooldownBind(bindKeyOverflow, doSortOverflow)
+-- Delayed refresh: pick up SN2ModSettings keybind values after it loads.
+-- QuickStack loads before SN2ModSettings alphabetically (Q < S), so shared
+-- variables aren't populated yet at require() time.
+ExecuteWithDelay(3000, function()
+    ExecuteInGameThread(function()
+        config.refreshModSettings()
+        rebuildBindings()
+    end)
+end)
 
 -- Network handlers: host executes operations on behalf of clients
 network.onMessage("SETLABEL", function(senderPC, payload)
@@ -1111,17 +1128,6 @@ network.onMessage("SETLABEL", function(senderPC, payload)
         end
     end
 end)
-
--- Restock-only keybind (only registered when configured and different from quickstack key)
-if not restockWithQuickstack and config.KeybindRestock ~= "" then
-    local bindKeyRestock = keyMap[config.KeybindRestock]
-    if not bindKeyRestock then
-        print(string.format("[QuickStack] ERROR: Unknown keybind_restock '%s'\n", config.KeybindRestock))
-    else
-        registerCooldownBind(bindKeyRestock, doRestockOnly)
-        print(string.format("[QuickStack] Restock keybind registered: %s\n", config.KeybindRestock))
-    end
-end
 
 -- Auto-sort on base entry: fires once per outside→inside transition
 -- Always registered (fires ~2-4 times per session), config checked in callback
