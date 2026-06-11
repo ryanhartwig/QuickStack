@@ -86,7 +86,7 @@ Edit `Mods/QuickStack/config.txt`:
 
 ## Links
 
-- [Nexus Mods](https://www.nexusmods.com/subnautica2/mods/80)
+- [Nexus Mods](https://www.nexusmods.com/subnautica2/mods/128)
 - [GitHub Releases](../../releases)
 
 ## License
