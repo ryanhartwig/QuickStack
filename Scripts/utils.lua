@@ -85,6 +85,105 @@ function utils.MetersToUnits(meters)
     return meters * 100
 end
 
+--- Actor caches: prime once with FindAllOf (~10ms), then NotifyOnNewObject keeps them
+--- fresh and IsValid() prunes destroyed actors. Per-press discovery cost is ~0ms.
+--- (SphereOverlapActors was tried and abandoned: ~13ms/call at base density vs flat
+--- ~10ms FindAllOf, and StaticFindObject MISSES cost ~14ms each — see probe docs.)
+local _actorCache = {}  -- className -> { actors = {}, primed = false }
+
+local WATCHED_CLASSES = {
+    SN2Locker          = "/Script/Subnautica2.SN2Locker",
+    BP_Tailing_Chest_C = "/Game/Blueprints/BaseBuilding/Tailing/BP_Tailing_Chest.BP_Tailing_Chest_C",
+    UWEPowerTerminal   = "/Script/UWEPower.UWEPowerTerminal",
+}
+
+for className, path in pairs(WATCHED_CLASSES) do
+    _actorCache[className] = { actors = {}, primed = false }
+    NotifyOnNewObject(path, function(obj)
+        -- Skip class default objects / archetypes
+        local isTemplate = false
+        pcall(function()
+            local n = obj:GetFullName()
+            isTemplate = (n:find("Default__") ~= nil)
+        end)
+        if not isTemplate then
+            table.insert(_actorCache[className].actors, obj)
+        end
+    end)
+end
+
+-- World/save switch: nil out cached UObject refs (Lua-only, no UObject access in
+-- teardown hooks — IsValid() on freed objects crashes).
+RegisterLoadMapPostHook(function()
+    for _, cache in pairs(_actorCache) do
+        cache.actors = {}
+        cache.primed = false
+    end
+end)
+
+--- Lazily prime a cache with pre-existing instances (covers hot reload mid-game and
+--- actors created before the notify registration). Deduped by full name.
+local function primeCache(className)
+    local cache = _actorCache[className]
+    if cache.primed then return end
+    cache.primed = true
+    local all = FindAllOf(className)
+    if not all then return end
+    local seen = {}
+    for _, a in ipairs(cache.actors) do
+        pcall(function() if a:IsValid() then seen[a:GetFullName()] = true end end)
+    end
+    for _, a in ipairs(all) do
+        pcall(function()
+            if a:IsValid() and not seen[a:GetFullName()] then
+                table.insert(cache.actors, a)
+            end
+        end)
+    end
+end
+
+function utils.FindNearby(pawn, radiusUnits, className)
+    local pos = pawn:K2_GetActorLocation()
+    local radiusSq = radiusUnits * radiusUnits
+    local result = {}
+
+    local cache = _actorCache[className]
+    if cache then
+        -- Cached path: validity-prune + distance filter, no object scan
+        primeCache(className)
+        local alive = {}
+        for _, actor in ipairs(cache.actors) do
+            local ok, valid = pcall(function() return actor:IsValid() end)
+            if ok and valid then
+                table.insert(alive, actor)
+                local okL, loc = pcall(function() return actor:K2_GetActorLocation() end)
+                if okL and loc then
+                    local dx, dy, dz = pos.X - loc.X, pos.Y - loc.Y, pos.Z - loc.Z
+                    if (dx * dx + dy * dy + dz * dz) <= radiusSq then
+                        table.insert(result, actor)
+                    end
+                end
+            end
+        end
+        cache.actors = alive
+        return #result > 0 and result or nil
+    end
+
+    -- Unwatched class: plain FindAllOf + distance scan
+    local actors = FindAllOf(className)
+    if not actors then return nil end
+    for _, actor in ipairs(actors) do
+        if actor:IsValid() then
+            local loc = actor:K2_GetActorLocation()
+            local dx, dy, dz = pos.X - loc.X, pos.Y - loc.Y, pos.Z - loc.Z
+            if (dx * dx + dy * dy + dz * dz) <= radiusSq then
+                table.insert(result, actor)
+            end
+        end
+    end
+    return #result > 0 and result or nil
+end
+
 --- Read common item data from an inventory item struct.
 --- Returns table { typeName, displayName, fullName, itemId, inventoryId, itemType, count } or nil.
 function utils.readItemInfo(itemStruct)
@@ -126,23 +225,19 @@ function utils.findNearbyTerminals(pawn, radiusUnits)
         BP_BasicBatteryTerminal_C = true,
         BP_PowerCellTerminal_C = true,
     }
-    local chargers = FindAllOf("UWEPowerTerminal")
-    if not chargers then return {} end
+    local chargers = utils.FindNearby(pawn, radiusUnits, "UWEPowerTerminal")
 
     local terminals = {}
-    for _, charger in ipairs(chargers) do
-        if charger:IsValid() then
+    if chargers then
+        for _, charger in ipairs(chargers) do
             local okCls, className = pcall(function() return charger:GetClass():GetFName():ToString() end)
             if okCls and CHARGER_CLASSES[className] then
-                local dist = utils.GetDistance(pawn, charger)
-                if dist <= radiusUnits then
-                    local ok, inv = pcall(function() return charger.InventoryComponent end)
-                    if ok and inv and inv:IsValid() then
-                        table.insert(terminals, {
-                            inv = inv,
-                            forPowerCell = (className == "BP_PowerCellTerminal_C"),
-                        })
-                    end
+                local ok, inv = pcall(function() return charger.InventoryComponent end)
+                if ok and inv and inv:IsValid() then
+                    table.insert(terminals, {
+                        inv = inv,
+                        forPowerCell = (className == "BP_PowerCellTerminal_C"),
+                    })
                 end
             end
         end
@@ -193,11 +288,27 @@ function utils.getLockerLabel(actor)
     return nil
 end
 
---- Whitelisted container classes for scanning
+--- Whitelisted container classes for scanning.
+--- NOTE: BP_Tailing_Chest_C is a plain Actor (NOT an SN2Locker subclass) and its
+--- inventory lives on .UWEInventory, not .InventoryComponent (verified in-game 2026-06-12).
 utils.CONTAINER_SOURCES = {
-    { class = "SN2Locker",          getInv = function(a) return a.Inventory end,          hasLabel = true },
-    { class = "BP_Tailing_Chest_C", getInv = function(a) return a.InventoryComponent end, hasLabel = false },
+    { class = "SN2Locker",          getInv = function(a) return a.Inventory end,     hasLabel = true },
+    { class = "BP_Tailing_Chest_C", getInv = function(a) return a.UWEInventory end,  hasLabel = false },
 }
+
+--- Collect nearby container actors from all sources. Returns { {actor, source}, ... }
+local function getNearbyContainerActors(pawn, radiusUnits)
+    local found = {}
+    for _, source in ipairs(utils.CONTAINER_SOURCES) do
+        local actors = utils.FindNearby(pawn, radiusUnits, source.class)
+        if actors then
+            for _, actor in ipairs(actors) do
+                table.insert(found, { actor = actor, source = source })
+            end
+        end
+    end
+    return found
+end
 
 --- Discover nearby containers, categorized by label prefix.
 --- Returns lockers, overflowLockers, excludedLockerInvs
@@ -209,65 +320,57 @@ function utils.discoverNearbyContainers(pawn, radiusUnits, cfg)
     local overflowLockers = {}
     local excludedLockerInvs = {}
 
-    for _, source in ipairs(utils.CONTAINER_SOURCES) do
-        local actors = FindAllOf(source.class)
-        if actors then
-            for _, actor in ipairs(actors) do
-                if actor:IsValid() then
-                    local dist = utils.GetDistance(pawn, actor)
-                    if dist <= radiusUnits then
-                        local ok, inv = pcall(function() return source.getInv(actor) end)
-                        if ok and inv and inv:IsValid() then
-                            local rawLabel = nil
-                            if source.hasLabel then
-                                local ok2, lbl = pcall(function() return utils.getLockerLabel(actor) end)
-                                if ok2 then rawLabel = lbl end
-                            end
+    local entries = getNearbyContainerActors(pawn, radiusUnits)
+    for _, entry in ipairs(entries) do
+        local actor, source = entry.actor, entry.source
+        local ok, inv = pcall(function() return source.getInv(actor) end)
+        if ok and inv and inv:IsValid() then
+            local rawLabel = nil
+            if source.hasLabel then
+                local ok2, lbl = pcall(function() return utils.getLockerLabel(actor) end)
+                if ok2 then rawLabel = lbl end
+            end
 
-                            -- Exclusion prefix
-                            if rawLabel and cfg.ExcludePrefix ~= "" then
-                                if rawLabel:sub(1, #cfg.ExcludePrefix) == cfg.ExcludePrefix then
-                                    table.insert(excludedLockerInvs, inv)
-                                    goto nextActor
-                                end
-                            end
-
-                            -- Overflow prefix
-                            if rawLabel and cfg.OverflowPrefix ~= "" then
-                                if rawLabel:sub(1, #cfg.OverflowPrefix) == cfg.OverflowPrefix then
-                                    table.insert(overflowLockers, {
-                                        inventory = inv,
-                                        inventoryId = inv.InventoryId,
-                                        label = rawLabel,
-                                    })
-                                    goto nextActor
-                                end
-                            end
-
-                            -- Parse routing label
-                            local label = nil
-                            if rawLabel and cfg.LabelRouting then
-                                if cfg.LabelPrefix == "" then
-                                    label = rawLabel
-                                else
-                                    local prefixLen = #cfg.LabelPrefix
-                                    if rawLabel:sub(1, prefixLen) == cfg.LabelPrefix then
-                                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
-                                        if label == "" then label = nil end
-                                    end
-                                end
-                            end
-                            table.insert(lockers, {
-                                inventory = inv,
-                                inventoryId = inv.InventoryId,
-                                label = label,
-                            })
-                        end
-                    end
-                    ::nextActor::
+            -- Exclusion prefix
+            if rawLabel and cfg.ExcludePrefix ~= "" then
+                if rawLabel:sub(1, #cfg.ExcludePrefix) == cfg.ExcludePrefix then
+                    table.insert(excludedLockerInvs, inv)
+                    goto nextActor
                 end
             end
+
+            -- Overflow prefix
+            if rawLabel and cfg.OverflowPrefix ~= "" then
+                if rawLabel:sub(1, #cfg.OverflowPrefix) == cfg.OverflowPrefix then
+                    table.insert(overflowLockers, {
+                        inventory = inv,
+                        inventoryId = inv.InventoryId,
+                        label = rawLabel,
+                    })
+                    goto nextActor
+                end
+            end
+
+            -- Parse routing label
+            local label = nil
+            if rawLabel and cfg.LabelRouting then
+                if cfg.LabelPrefix == "" then
+                    label = rawLabel
+                else
+                    local prefixLen = #cfg.LabelPrefix
+                    if rawLabel:sub(1, prefixLen) == cfg.LabelPrefix then
+                        label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
+                        if label == "" then label = nil end
+                    end
+                end
+            end
+            table.insert(lockers, {
+                inventory = inv,
+                inventoryId = inv.InventoryId,
+                label = label,
+            })
         end
+        ::nextActor::
     end
 
     -- Stable overflow ordering
@@ -279,20 +382,10 @@ end
 --- Find all nearby container inventories (no label parsing). For restock-only scanning.
 function utils.findAllNearbyInvs(pawn, radiusUnits)
     local invs = {}
-    for _, source in ipairs(utils.CONTAINER_SOURCES) do
-        local actors = FindAllOf(source.class)
-        if actors then
-            for _, actor in ipairs(actors) do
-                if actor:IsValid() then
-                    local dist = utils.GetDistance(pawn, actor)
-                    if dist <= radiusUnits then
-                        local ok, inv = pcall(function() return source.getInv(actor) end)
-                        if ok and inv and inv:IsValid() then
-                            table.insert(invs, inv)
-                        end
-                    end
-                end
-            end
+    for _, entry in ipairs(getNearbyContainerActors(pawn, radiusUnits)) do
+        local ok, inv = pcall(function() return entry.source.getInv(entry.actor) end)
+        if ok and inv and inv:IsValid() then
+            table.insert(invs, inv)
         end
     end
     return invs
@@ -313,46 +406,36 @@ function utils.findTadpoleSourceInventories(pawn, radiusUnits)
     local seen = {}
 
     -- Haul chassis built-in inventory
-    local haulActors = FindAllOf("BP_Haul_TadpoleChassis_C")
+    local haulActors = utils.FindNearby(pawn, radiusUnits, "BP_Haul_TadpoleChassis_C")
     if haulActors then
         for _, actor in ipairs(haulActors) do
-            if actor:IsValid() then
-                local dist = utils.GetDistance(pawn, actor)
-                if dist <= radiusUnits then
-                    local ok, inv = pcall(function() return actor.UWEInventory end)
-                    if ok and inv and inv:IsValid() then
-                        local okId, invId = pcall(function() return inv.InventoryId end)
-                        if okId then
-                            seen[invId] = true
-                            table.insert(inventories, inv)
-                        end
-                    end
+            local ok, inv = pcall(function() return actor.UWEInventory end)
+            if ok and inv and inv:IsValid() then
+                local okId, invId = pcall(function() return inv.InventoryId end)
+                if okId then
+                    seen[invId] = true
+                    table.insert(inventories, inv)
                 end
             end
         end
     end
 
     -- Portable lockers attached to any tadpole/chassis hardpoint
-    local lockers = FindAllOf("BP_FloatingLocker_Carryable_C")
+    local lockers = utils.FindNearby(pawn, radiusUnits, "BP_FloatingLocker_Carryable_C")
     if lockers then
         for _, locker in ipairs(lockers) do
-            if locker:IsValid() then
-                local dist = utils.GetDistance(pawn, locker)
-                if dist <= radiusUnits then
-                    local okP, parent = pcall(function() return locker:GetAttachParentActor() end)
-                    if okP and parent then
-                        local okV, pValid = pcall(function() return parent:IsValid() end)
-                        if okV and pValid then
-                            local okC, cls = pcall(function() return parent:GetClass():GetFName():ToString() end)
-                            if okC and utils.TADPOLE_CLASSES[cls] then
-                                local ok, inv = pcall(function() return locker.UWEInventory end)
-                                if ok and inv and inv:IsValid() then
-                                    local okId, invId = pcall(function() return inv.InventoryId end)
-                                    if okId and not seen[invId] then
-                                        seen[invId] = true
-                                        table.insert(inventories, inv)
-                                    end
-                                end
+            local okP, parent = pcall(function() return locker:GetAttachParentActor() end)
+            if okP and parent then
+                local okV, pValid = pcall(function() return parent:IsValid() end)
+                if okV and pValid then
+                    local okC, cls = pcall(function() return parent:GetClass():GetFName():ToString() end)
+                    if okC and utils.TADPOLE_CLASSES[cls] then
+                        local ok, inv = pcall(function() return locker.UWEInventory end)
+                        if ok and inv and inv:IsValid() then
+                            local okId, invId = pcall(function() return inv.InventoryId end)
+                            if okId and not seen[invId] then
+                                seen[invId] = true
+                                table.insert(inventories, inv)
                             end
                         end
                     end

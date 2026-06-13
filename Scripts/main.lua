@@ -23,7 +23,7 @@ restock.init(config)
 ui.init(config)
 autolabel.init(config)
 
-local VERSION = "4.0.1"
+local VERSION = "4.1.0"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
@@ -594,6 +594,8 @@ local function doQuickStack()
         return
     end
 
+    local radiusUnits = utils.MetersToUnits(config.Radius)
+
     -- Battery management always runs on quickstack (N key), not tied to restock keybind.
     -- Runs first so getTransferableItems sees the post-management inventory.
     local batteryStashCount, batteryPullCount = 0, 0
@@ -606,7 +608,6 @@ local function doQuickStack()
 
     local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
 
-    local radiusUnits = utils.MetersToUnits(config.Radius)
     local nearbyLockers, overflowLockers, excludedLockerInvs = utils.discoverNearbyContainers(pawn, radiusUnits, config)
 
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
@@ -692,12 +693,14 @@ local function doQuickStack()
     -- Nothing to do?
     local batteryActivity = batteryStashCount + batteryPullCount
     if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and not restockEnabled and not config.SortFromTadpole then
+
         utils.Notify(L("nothing_to_stack"), config)
         return
     end
 
     -- If nothing to stash/swap but restock is enabled, skip straight to restock
     if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled and not config.SortFromTadpole then
+
         local restockDetails = restock.execute(playerInv, restockCandidates)
         mergeDetails(restockDetails, batteryDetails)
         local restockCount = 0
@@ -716,6 +719,7 @@ local function doQuickStack()
         if config.SortFromTadpole then
             tadpoleMoved, tadpoleDetails = doTadpoleSourcePass(playerInv, nearbyLockers, overflowLockers)
         end
+
         local restockDetails = restock.execute(playerInv, restockCandidates)
         showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
     end
@@ -858,7 +862,9 @@ local function doSortOverflow()
     if not playerInv or not playerInv:IsValid() then return end
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
+
     local targetLockers, overflowLockers = utils.discoverNearbyContainers(pawn, radiusUnits, config)
+    utils.clearNearbyCache()
 
     if #overflowLockers == 0 then
         utils.Notify(L("no_overflow"), config)
@@ -992,7 +998,9 @@ local function doRestockOnly()
     end
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
+
     local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
+    utils.clearNearbyCache()
     if #allLockerInvs == 0 then
         utils.Notify(L("no_match"), config)
         return
@@ -1018,17 +1026,28 @@ end
 --- Check if any text input field has keyboard focus
 --- Suppresses hotkeys during label editing, F8 bug reports, chat, etc.
 --- Does NOT suppress when inventory or container UI is open (no text input focused)
+local _activeTextBoxes = {}
+NotifyOnNewObject("/Script/UMG.EditableTextBox", function(widget)
+    table.insert(_activeTextBoxes, widget)
+end)
+
 local function isTextInputFocused()
-    local inputs = FindAllOf("EditableTextBox")
-    if inputs then
-        for _, widget in ipairs(inputs) do
-            if widget:IsValid() then
-                local ok, focused = pcall(function() return widget:HasKeyboardFocus() end)
-                if ok and focused then return true end
+    if #_activeTextBoxes == 0 then return false end
+    -- Prune invalid (destroyed) widgets and check focus in one pass
+    local alive = {}
+    local focused = false
+    for _, w in ipairs(_activeTextBoxes) do
+        local ok, valid = pcall(function() return w:IsValid() end)
+        if ok and valid then
+            table.insert(alive, w)
+            if not focused then
+                local ok2, f = pcall(function() return w:HasKeyboardFocus() end)
+                if ok2 and f then focused = true end
             end
         end
     end
-    return false
+    _activeTextBoxes = alive
+    return focused
 end
 
 --- Override locker label character limit
@@ -1042,32 +1061,19 @@ if config.LabelMaxChars and config.LabelMaxChars > 0 then
     end)
 end
 
--- Dynamic keybind dispatch: register ALL possible keys, dispatch by current config.
--- UE4SS has no UnregisterKeyBind, so static registration can't adapt to SN2ModSettings
--- changes. Instead, every key in keyMap gets a handler that does an O(1) table lookup.
--- Unbound keys hit nil and return instantly — no ExecuteInGameThread, no overhead.
+-- Keybind dispatch: register only keys the user has actually bound (v4.0 registered
+-- ALL keys in keyMap, which blocked other mods' binds — e.g. F2 for DatabaseTerminal).
+-- Dispatch goes through activeBindings so SN2ModSettings keybind changes still apply
+-- live: rebuildBindings() re-points actions and registers newly-needed keys; keys no
+-- longer bound dispatch to nil and become no-ops (UE4SS has no UnregisterKeyBind).
 local activeBindings = {}  -- keyStr -> actionFn
+local registeredKeys = {}  -- keyStr -> true (RegisterKeyBind is permanent per session)
 
-local function rebuildBindings()
-    activeBindings = {}
-    -- Priority order: first bind wins if user accidentally assigns the same key twice
-    local function bind(keyStr, action)
-        if keyStr and keyStr ~= "" and not activeBindings[keyStr] then
-            activeBindings[keyStr] = action
-        end
-    end
-    bind(config.Keybind, doQuickStack)
-    bind(config.KeybindOpen, doQuickStackOpen)
-    bind(config.KeybindOverflow, doSortOverflow)
-    local rws = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
-    if not rws then
-        bind(config.KeybindRestock, doRestockOnly)
-    end
-end
-
-rebuildBindings()
-
-for keyStr, keyConst in pairs(keyMap) do
+local function registerKey(keyStr)
+    if registeredKeys[keyStr] then return end
+    local keyConst = keyMap[keyStr]
+    if not keyConst then return end
+    registeredKeys[keyStr] = true
     RegisterKeyBind(keyConst, function()
         local action = activeBindings[keyStr]
         if not action then return end
@@ -1076,11 +1082,6 @@ for keyStr, keyConst in pairs(keyMap) do
             local now = os.clock()
             if now - lastActivation < config.Cooldown then return end
             lastActivation = now
-            config.refreshModSettings()
-            rebuildBindings()
-            -- Re-check: key might no longer be bound after settings refresh
-            action = activeBindings[keyStr]
-            if not action then return end
             autolabel.suppress = true
             action()
             -- Delay clearing to cover async callbacks (waitForReplication)
@@ -1093,13 +1094,44 @@ for keyStr, keyConst in pairs(keyMap) do
     end)
 end
 
--- Delayed refresh: pick up SN2ModSettings keybind values after it loads.
+local function rebuildBindings()
+    activeBindings = {}
+    -- Priority order: first bind wins if user accidentally assigns the same key twice
+    local function bind(keyStr, action)
+        if keyStr and keyStr ~= "" and not activeBindings[keyStr] then
+            activeBindings[keyStr] = action
+            registerKey(keyStr)
+        end
+    end
+    bind(config.Keybind, doQuickStack)
+    bind(config.KeybindOpen, doQuickStackOpen)
+    bind(config.KeybindOverflow, doSortOverflow)
+    if config.KeybindRestock ~= "" and config.KeybindRestock ~= config.Keybind then
+        bind(config.KeybindRestock, doRestockOnly)
+    end
+end
+
+rebuildBindings()
+
+-- Delayed refresh: pick up SN2ModSettings values after it loads.
 -- QuickStack loads before SN2ModSettings alphabetically (Q < S), so shared
 -- variables aren't populated yet at require() time.
 ExecuteWithDelay(3000, function()
     ExecuteInGameThread(function()
         config.refreshModSettings()
         rebuildBindings()
+    end)
+end)
+
+-- Refresh settings when ESC is pressed (covers closing SN2ModSettings/pause menu).
+-- This replaces the old per-keypress refreshModSettings(), which read 25 SharedVariables
+-- (~8ms each = ~200ms stutter) on every quickstack.
+RegisterKeyBind(Key.ESCAPE, function()
+    ExecuteWithDelay(500, function()
+        ExecuteInGameThread(function()
+            config.refreshModSettings()
+            rebuildBindings()
+        end)
     end)
 end)
 
@@ -1150,7 +1182,8 @@ do
         local isInBase = inBase:get()
         if isInBase and not wasInBase then
             wasInBase = true
-            config.refreshModSettings()
+            config.refreshOne("auto_sort_on_entry")
+            config.refreshOne("auto_sort_cooldown")
             if config.AutoSortOnEntry then
                 local now = os.clock()
                 if now - lastAutoSort >= config.AutoSortCooldown then
