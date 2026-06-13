@@ -14,6 +14,7 @@ local restock = require("restock")
 local ui = require("ui")
 local autolabel = require("autolabel")
 local network = require("network")
+local globalpull = require("globalpull")
 local lang = require("lang")
 local L = lang.L
 
@@ -22,8 +23,9 @@ battery.init(config)
 restock.init(config)
 ui.init(config)
 autolabel.init(config)
+globalpull.init(config)
 
-local VERSION = "4.1.0"
+local VERSION = "4.2.0-dev"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
@@ -613,11 +615,19 @@ local function doQuickStack()
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
     local swapCount = battery.doBatterySwap(pawn, playerInv)
 
-    -- Do item stacking
+    -- Item stacking. With Infinite Range on (host/SP), route to all gated lockers map-wide
+    -- via the inventory subsystem; otherwise the proven nearby path. Clients fall back to
+    -- local range until the MP client->host routing path is probed.
+    local infiniteStack = config.InfiniteRange and globalpull.isHost()
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
-    if #transferableItems > 0 and #nearbyLockers > 0 then
-        actualTransferred, numContainers, someFull, transferDetails = transferToLockers(
-            playerInv, transferableItems, totalItemsBefore, nearbyLockers)
+    if #transferableItems > 0 then
+        if infiniteStack then
+            actualTransferred, numContainers, someFull, transferDetails = globalpull.stack(
+                playerInv, transferableItems, totalItemsBefore)
+        elseif #nearbyLockers > 0 then
+            actualTransferred, numContainers, someFull, transferDetails = transferToLockers(
+                playerInv, transferableItems, totalItemsBefore, nearbyLockers)
+        end
     end
 
     -- Restock runs with quickstack unless a separate restock keybind is configured
@@ -864,7 +874,6 @@ local function doSortOverflow()
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
     local targetLockers, overflowLockers = utils.discoverNearbyContainers(pawn, radiusUnits, config)
-    utils.clearNearbyCache()
 
     if #overflowLockers == 0 then
         utils.Notify(L("no_overflow"), config)
@@ -1000,7 +1009,6 @@ local function doRestockOnly()
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
     local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
-    utils.clearNearbyCache()
     if #allLockerInvs == 0 then
         utils.Notify(L("no_match"), config)
         return

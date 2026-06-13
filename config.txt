@@ -105,3 +105,11 @@ auto_sort_on_entry=false
 # Cooldown in seconds between auto-sort triggers (prevents repeated fires
 # when entering/exiting moonpool area). Only applies to auto-sort, not N key.
 auto_sort_cooldown=60
+
+# ── Infinite Range (Global Pull) — EXPERIMENTAL ──
+
+# When true, quickstack (N) deposits into ALL your base lockers map-wide via the
+# inventory subsystem, ignoring the radius limit — route to any labeled/type-matched
+# locker no matter how far. Same routing rules as normal (label match -> type-count).
+# Host & single-player only; co-op clients fall back to local range. Default off.
+infinite_range=false

@@ -33,6 +33,7 @@ config.AutoLabelMax = 0
 config.SortFromTadpole = false
 config.AutoSortOnEntry = false
 config.AutoSortCooldown = 60
+config.InfiniteRange = false
 
 -- Parse a comma-separated string into a table
 local function parseList(str)
@@ -129,6 +130,8 @@ local function loadConfig()
                     config.AutoSortOnEntry = (value == "true")
                 elseif key == "auto_sort_cooldown" then
                     config.AutoSortCooldown = tonumber(value) or 60
+                elseif key == "infinite_range" then
+                    config.InfiniteRange = (value == "true")
                 end
             end
         end
@@ -180,6 +183,8 @@ local settingsMap = {
     -- Auto-sort
     { key = "auto_sort_on_entry",  field = "AutoSortOnEntry",   type = "boolean" },
     { key = "auto_sort_cooldown",  field = "AutoSortCooldown",  type = "number" },
+    -- Infinite range (global pull)
+    { key = "infinite_range",      field = "InfiniteRange",     type = "boolean" },
 }
 
 function config.refreshModSettings()

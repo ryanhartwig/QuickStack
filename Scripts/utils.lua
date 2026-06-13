@@ -169,6 +169,22 @@ end)
 -- Mod load / hot reload catch-up: prime once the world is up.
 primeAllSoon()
 
+--- Return all loaded, valid actors of a watched class (no distance filter).
+--- Used by globalpull to harvest locker labels from whatever is currently loaded.
+--- Prunes destroyed refs in place. Returns nil if none.
+function utils.getLoadedActors(className)
+    local cache = _actorCache[className]
+    if not cache then return nil end
+    primeCache(className)
+    local alive = {}
+    for _, actor in ipairs(cache.actors) do
+        local ok, valid = pcall(function() return actor:IsValid() end)
+        if ok and valid then alive[#alive + 1] = actor end
+    end
+    cache.actors = alive
+    return #alive > 0 and alive or nil
+end
+
 function utils.FindNearby(pawn, radiusUnits, className)
     local pos = pawn:K2_GetActorLocation()
     local radiusSq = radiusUnits * radiusUnits

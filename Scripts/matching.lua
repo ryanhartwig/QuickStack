@@ -3,19 +3,22 @@
 
 local matching = {}
 
---- Score how well a locker label matches an item's display name
---- Returns 0 (no match) or positive score (higher = better match)
---- Label is comma-separated groups (OR), each group is space-separated tokens (AND)
---- Each token must be a case-insensitive prefix of a distinct word in the display name
---- Score = word coverage + character coverage tiebreaker
---- The tiebreaker ensures "铜线" beats "铜" for item "铜线" (CJK has no word spaces)
-function matching.scoreLockerMatch(label, displayName)
+--- Split a display name into lowercased words + total char count (the per-name work).
+--- Extracted so callers scoring ONE item against MANY labels (e.g. global pull) can
+--- tokenize once instead of re-splitting the same name per label. Returns words, chars.
+function matching.tokenizeName(displayName)
     local nameWords = {}
     local totalNameChars = 0
     for word in displayName:lower():gmatch("%S+") do
         table.insert(nameWords, word)
         totalNameChars = totalNameChars + #word
     end
+    return nameWords, totalNameChars
+end
+
+--- Score a label against PRE-TOKENIZED name words (see tokenizeName). Same algorithm
+--- as scoreLockerMatch; split out so the per-name tokenization isn't repeated per label.
+function matching.scoreWithTokens(label, nameWords, totalNameChars)
     if #nameWords == 0 then return 0 end
 
     local bestScore = 0
@@ -57,6 +60,17 @@ function matching.scoreLockerMatch(label, displayName)
     end
 
     return bestScore
+end
+
+--- Score how well a locker label matches an item's display name.
+--- Returns 0 (no match) or positive score (higher = better match).
+--- Label is comma-separated groups (OR), each group is space-separated tokens (AND).
+--- Each token must be a case-insensitive prefix of a distinct word in the display name.
+--- Score = word coverage + character coverage tiebreaker.
+--- The tiebreaker ensures "铜线" beats "铜" for item "铜线" (CJK has no word spaces).
+function matching.scoreLockerMatch(label, displayName)
+    local nameWords, totalNameChars = matching.tokenizeName(displayName)
+    return matching.scoreWithTokens(label, nameWords, totalNameChars)
 end
 
 return matching
