@@ -95,6 +95,9 @@ local WATCHED_CLASSES = {
     SN2Locker          = "/Script/Subnautica2.SN2Locker",
     BP_Tailing_Chest_C = "/Game/Blueprints/BaseBuilding/Tailing/BP_Tailing_Chest.BP_Tailing_Chest_C",
     UWEPowerTerminal   = "/Script/UWEPower.UWEPowerTerminal",
+    -- Tadpole sourcing (only queried when sort_from_tadpole is enabled)
+    BP_Haul_TadpoleChassis_C      = "/Game/Blueprints/Vehicle/Tadpole/BP_Haul_TadpoleChassis.BP_Haul_TadpoleChassis_C",
+    BP_FloatingLocker_Carryable_C = "/Game/Blueprints/Items/Deployables/BP_FloatingLocker_Carryable.BP_FloatingLocker_Carryable_C",
 }
 
 for className, path in pairs(WATCHED_CLASSES) do
@@ -111,15 +114,6 @@ for className, path in pairs(WATCHED_CLASSES) do
         end
     end)
 end
-
--- World/save switch: nil out cached UObject refs (Lua-only, no UObject access in
--- teardown hooks — IsValid() on freed objects crashes).
-RegisterLoadMapPostHook(function()
-    for _, cache in pairs(_actorCache) do
-        cache.actors = {}
-        cache.primed = false
-    end
-end)
 
 --- Lazily prime a cache with pre-existing instances (covers hot reload mid-game and
 --- actors created before the notify registration). Deduped by full name.
@@ -141,6 +135,39 @@ local function primeCache(className)
         end)
     end
 end
+
+--- Prime all caches shortly after world load so the FIRST quickstack is as fast as
+--- subsequent ones (priming costs ~10ms per class — invisible during load, a small
+--- hitch mid-gameplay). Lazy priming in FindNearby remains as the fallback for
+--- presses inside the 5s window. No-ops at the main menu (no possessed pawn).
+local function primeAllSoon()
+    ExecuteWithDelay(5000, function()
+        ExecuteInGameThread(function()
+            pcall(function()
+                local pc = UEHelpers:GetPlayerController()
+                if not pc or not pc:IsValid() then return end
+                local pawn = pc.Pawn
+                if not pawn or not pawn:IsValid() then return end
+                for className in pairs(WATCHED_CLASSES) do
+                    primeCache(className)
+                end
+            end)
+        end)
+    end)
+end
+
+-- World/save switch: nil out cached UObject refs (Lua-only, no UObject access in
+-- teardown hooks — IsValid() on freed objects crashes), then schedule a re-prime.
+RegisterLoadMapPostHook(function()
+    for _, cache in pairs(_actorCache) do
+        cache.actors = {}
+        cache.primed = false
+    end
+    primeAllSoon()
+end)
+
+-- Mod load / hot reload catch-up: prime once the world is up.
+primeAllSoon()
 
 function utils.FindNearby(pawn, radiusUnits, className)
     local pos = pawn:K2_GetActorLocation()
