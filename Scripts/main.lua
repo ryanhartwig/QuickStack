@@ -633,15 +633,22 @@ local function doQuickStack()
     -- Restock runs with quickstack unless a separate restock keybind is configured
     local restockWithQuickstack = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
 
-    -- Build restock candidates from all nearby locker inventories
+    -- Build restock candidates. Infinite range pulls consumables from ALL lockers map-wide
+    -- (via the subsystem); local range from nearby lockers only. restockMoveFn routes the
+    -- restock pulls through the server-authoritative subsystem move when infinite.
     local restockCandidates = {}
+    local restockMoveFn = infiniteStack and globalpull.move or nil
     local restockEnabled = restockWithQuickstack and restock.isEnabled()
     if restockEnabled then
-        local allLockerInvs = {}
-        for _, data in ipairs(nearbyLockers) do table.insert(allLockerInvs, data.inventory) end
-        for _, data in ipairs(overflowLockers) do table.insert(allLockerInvs, data.inventory) end
-        for _, inv in ipairs(excludedLockerInvs) do table.insert(allLockerInvs, inv) end
-        restockCandidates = restock.buildCandidates(allLockerInvs)
+        if infiniteStack then
+            restockCandidates = globalpull.buildRestockCandidates()
+        else
+            local allLockerInvs = {}
+            for _, data in ipairs(nearbyLockers) do table.insert(allLockerInvs, data.inventory) end
+            for _, data in ipairs(overflowLockers) do table.insert(allLockerInvs, data.inventory) end
+            for _, inv in ipairs(excludedLockerInvs) do table.insert(allLockerInvs, inv) end
+            restockCandidates = restock.buildCandidates(allLockerInvs)
+        end
     end
 
     -- Merge battery details into restock details for the summary panel
@@ -711,7 +718,7 @@ local function doQuickStack()
     -- If nothing to stash/swap but restock is enabled, skip straight to restock
     if #transferableItems == 0 and swapCount == 0 and batteryActivity == 0 and restockEnabled and not config.SortFromTadpole then
 
-        local restockDetails = restock.execute(playerInv, restockCandidates)
+        local restockDetails = restock.execute(playerInv, restockCandidates, restockMoveFn)
         mergeDetails(restockDetails, batteryDetails)
         local restockCount = 0
         for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
@@ -730,12 +737,26 @@ local function doQuickStack()
             tadpoleMoved, tadpoleDetails = doTadpoleSourcePass(playerInv, nearbyLockers, overflowLockers)
         end
 
-        local restockDetails = restock.execute(playerInv, restockCandidates)
+        local restockDetails = restock.execute(playerInv, restockCandidates, restockMoveFn)
         showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
     end
 
     -- Pass 2: Overflow dump (only if overflow lockers exist and items remain)
     local function doOverflowPass(pass1Transferred, pass1Containers)
+        -- Infinite range: dump leftovers to %o lockers map-wide via the subsystem.
+        -- Host/SP only (infiniteStack already implies host), so moves are synchronous and
+        -- authoritative — no replication wait needed.
+        if infiniteStack then
+            local remainingItems = getTransferableItems(playerInv)
+            if #remainingItems == 0 then
+                finalize(pass1Transferred, pass1Containers, {})
+                return
+            end
+            local moved, containers, details = globalpull.overflowDump(playerInv, remainingItems)
+            finalize(pass1Transferred + moved, pass1Containers + containers, details)
+            return
+        end
+
         if #overflowLockers == 0 then
             finalize(pass1Transferred, pass1Containers, {})
             return
@@ -1008,19 +1029,26 @@ local function doRestockOnly()
 
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
-    local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
-    if #allLockerInvs == 0 then
-        utils.Notify(L("no_match"), config)
-        return
+    -- Infinite range: pull consumables from ALL lockers map-wide via the subsystem.
+    local infinite = config.InfiniteRange and globalpull.isHost()
+    local candidates, restockMoveFn
+    if infinite then
+        candidates = globalpull.buildRestockCandidates()
+        restockMoveFn = globalpull.move
+    else
+        local allLockerInvs = utils.findAllNearbyInvs(pawn, radiusUnits)
+        if #allLockerInvs == 0 then
+            utils.Notify(L("no_match"), config)
+            return
+        end
+        candidates = restock.buildCandidates(allLockerInvs)
     end
-
-    local candidates = restock.buildCandidates(allLockerInvs)
     if #candidates == 0 then
         utils.Notify(L("nothing_to_restock"), config)
         return
     end
 
-    local restockDetails = restock.execute(playerInv, candidates)
+    local restockDetails = restock.execute(playerInv, candidates, restockMoveFn)
     local restockCount = 0
     for _ in pairs(restockDetails) do restockCount = restockCount + 1 end
     if restockCount > 0 then

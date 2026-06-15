@@ -7,9 +7,10 @@
 --- gate excludes loot crates / vehicles / player inventories; item move verified at 5486m.
 --- Spec: docs/superpowers/specs/2026-06-13-quickstack-infinite-range-design.md (sn2-modding repo)
 
-local utils    = require("utils")
-local matching = require("matching")
-local network  = require("network")
+local utils      = require("utils")
+local matching   = require("matching")
+local network    = require("network")
+local categories = require("categories")
 
 local globalpull = {}
 local config = nil
@@ -244,6 +245,117 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
     return actualTransferred, numContainers, someFull, transferDetails
+end
+
+local function getPlayerInvId()
+    local id = -1
+    pcall(function()
+        local pawn = utils.GetPlayerPawn()
+        if pawn then id = pawn.InventoryComponent.InventoryId end
+    end)
+    return id
+end
+
+--- Build restock candidates (consumables) from ALL gated lockers map-wide, via the
+--- subsystem. Same candidate shape as restock.buildCandidates so restock.execute can
+--- consume it unchanged. Keyed inventoryId = the locker id (subsystem-stable).
+function globalpull.buildRestockCandidates()
+    local ss = getSubsystem()
+    if not ss then return {} end
+    local lockerClass = getLockerClass()
+    if not lockerClass then return {} end
+    local playerInvId = getPlayerInvId()
+
+    local candidates = {}
+    local N = ss.HighestInventoryId or 0
+    for id = 1, N do
+        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+            pcall(function()
+                for _, it in ipairs(ss:GetItemsForInventory(id)) do
+                    local s = it:get()
+                    local typeName = utils.readItemTypeName(s)
+                    if typeName then
+                        local category = categories.getConsumableCategory(typeName)
+                        if category then
+                            local displayName = nil
+                            pcall(function() displayName = s.ItemType.Name:ToString() end)
+                            candidates[#candidates + 1] = {
+                                itemId = s.ItemId,
+                                inventoryId = id,
+                                typeName = typeName,
+                                displayName = displayName or typeName:gsub("^DA_", ""):gsub("_ItemType$", ""),
+                                itemType = s.ItemType,
+                                category = category,
+                                priority = categories.getPriority(typeName, category),
+                            }
+                        end
+                    end
+                end
+            end)
+        end
+    end
+    return candidates
+end
+
+--- Dump leftover items into %o-labeled overflow lockers map-wide, via the subsystem.
+--- Returns (moved, containerCount, overflowDetails). Mirrors the local overflow pass.
+function globalpull.overflowDump(playerInv, remainingItems)
+    local ss = getSubsystem()
+    if not ss then return 0, 0, {} end
+    local lockerClass = getLockerClass()
+    if not lockerClass then return 0, 0, {} end
+    if config.OverflowPrefix == "" then return 0, 0, {} end
+
+    globalpull.harvestLabels()
+    local playerInvId = playerInv.InventoryId
+
+    -- Enumerate %o-labeled gated lockers (overflow targets).
+    local ids, count, maxItems, labels = {}, {}, {}, {}
+    local N = ss.HighestInventoryId or 0
+    for id = 1, N do
+        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+            local raw = _labelRegistry[id]
+            if raw and raw:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
+                local idx = #ids + 1
+                ids[idx] = id
+                labels[idx] = raw
+                count[idx] = 0
+                maxItems[idx] = DEFAULT_MAX_ITEMS
+                pcall(function()
+                    local mx = ss:GetMaxItemsForInventory(id)
+                    if mx and mx > 0 then maxItems[idx] = mx end
+                    count[idx] = #ss:GetItemsForInventory(id)
+                end)
+            end
+        end
+    end
+    if #ids == 0 then return 0, 0, {} end
+
+    -- Stable order by label, like the local overflow pass.
+    -- (ids/labels are parallel; sort an index permutation.)
+    local order = {}
+    for i = 1, #ids do order[i] = i end
+    table.sort(order, function(a, b) return (labels[a] or "") < (labels[b] or "") end)
+
+    local used, details, moved = {}, {}, 0
+    for _, item in ipairs(remainingItems) do
+        for _, i in ipairs(order) do
+            if count[i] < maxItems[i] then
+                if globalpull.move(item.itemId, item.inventoryId, ids[i]) then
+                    used[i] = true
+                    count[i] = count[i] + 1
+                    moved = moved + 1
+                    utils.recordDetail(details, item.typeName, item.itemType, item.displayName,
+                        labels[i] or "Overflow")
+                    break
+                end
+            end
+        end
+    end
+
+    local n = 0
+    for _ in pairs(used) do n = n + 1 end
+    return moved, n, details
 end
 
 return globalpull

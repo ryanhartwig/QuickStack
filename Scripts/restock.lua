@@ -41,13 +41,19 @@ function restock.buildCandidates(lockerInvs)
 end
 
 --- Execute the restock pass: fill shortfalls, then upgrade worst for best.
---- candidates: from buildCandidates()
+--- candidates: from buildCandidates() or globalpull.buildRestockCandidates()
+--- moveFn (optional): function(itemId, fromId, toId) -> bool. Default = the local
+---   component path (playerInv:MoveItemBetweenInventories). Infinite range passes the
+---   server-authoritative subsystem move so far-locker pulls work map-wide.
 --- Returns restockDetails table for the summary panel.
-function restock.execute(playerInv, candidates)
+function restock.execute(playerInv, candidates, moveFn)
     local restockDetails = {}
     if #candidates == 0 then return restockDetails end
 
     local playerInvId = playerInv.InventoryId
+    moveFn = moveFn or function(itemId, fromId, toId)
+        return (pcall(function() playerInv:MoveItemBetweenInventories(itemId, fromId, toId) end))
+    end
 
     -- Scan player's current consumables
     local heldByCategory = { food = {}, drink = {}, heal = {} }
@@ -87,9 +93,7 @@ function restock.execute(playerInv, candidates)
     for i, candidate in ipairs(candidates) do
         local cat = candidate.category
         if budgets[cat] and budgets[cat] > 0 then
-            local ok = pcall(function()
-                playerInv:MoveItemBetweenInventories(candidate.itemId, candidate.inventoryId, playerInvId)
-            end)
+            local ok = moveFn(candidate.itemId, candidate.inventoryId, playerInvId)
             if ok then
                 budgets[cat] = budgets[cat] - 1
                 usedCandidates[i] = true
@@ -138,21 +142,15 @@ function restock.execute(playerInv, candidates)
             local worst = held[1]
             if not worst or candidate.priority >= worst.priority then break end
 
-            local stashOk = pcall(function()
-                playerInv:MoveItemBetweenInventories(worst.itemId, worst.inventoryId, candidate.inventoryId)
-            end)
+            local stashOk = moveFn(worst.itemId, worst.inventoryId, candidate.inventoryId)
             if stashOk then
-                local pullOk = pcall(function()
-                    playerInv:MoveItemBetweenInventories(candidate.itemId, candidate.inventoryId, playerInvId)
-                end)
+                local pullOk = moveFn(candidate.itemId, candidate.inventoryId, playerInvId)
                 if pullOk then
                     usedCandidates[i] = true
                     table.remove(held, 1)
                     utils.recordDetail(restockDetails, candidate.typeName, candidate.itemType, candidate.displayName, "Locker")
                 else
-                    pcall(function()
-                        playerInv:MoveItemBetweenInventories(worst.itemId, candidate.inventoryId, worst.inventoryId)
-                    end)
+                    moveFn(worst.itemId, candidate.inventoryId, worst.inventoryId)
                 end
             end
 
