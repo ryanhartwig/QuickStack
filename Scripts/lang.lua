@@ -2,6 +2,7 @@
 -- Detects game language and provides L() for translated strings.
 -- Add new languages by adding a table keyed by ISO code (e.g. "de", "fr").
 
+local gthread = require("gthread")
 local lang = {}
 
 -----------------------------------------------------------
@@ -1307,10 +1308,8 @@ end
 lang.refresh()
 
 -- Re-check after game has finished applying saved settings
-ExecuteWithDelay(3000, function()
-    ExecuteInGameThread(function()
-        lang.refresh()
-    end)
+gthread.defer(3000, function()
+    lang.refresh()
 end)
 
 -- Auto-refresh when the user changes language in settings

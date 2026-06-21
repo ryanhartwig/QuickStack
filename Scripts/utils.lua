@@ -1,4 +1,5 @@
 local UEHelpers = require("UEHelpers")
+local gthread = require("gthread")
 local utils = {}
 
 --- Calculate 3D distance between two actors
@@ -141,17 +142,15 @@ end
 --- hitch mid-gameplay). Lazy priming in FindNearby remains as the fallback for
 --- presses inside the 5s window. No-ops at the main menu (no possessed pawn).
 local function primeAllSoon()
-    ExecuteWithDelay(5000, function()
-        ExecuteInGameThread(function()
-            pcall(function()
-                local pc = UEHelpers:GetPlayerController()
-                if not pc or not pc:IsValid() then return end
-                local pawn = pc.Pawn
-                if not pawn or not pawn:IsValid() then return end
-                for className in pairs(WATCHED_CLASSES) do
-                    primeCache(className)
-                end
-            end)
+    gthread.defer(5000, function()
+        pcall(function()
+            local pc = UEHelpers:GetPlayerController()
+            if not pc or not pc:IsValid() then return end
+            local pawn = pc.Pawn
+            if not pawn or not pawn:IsValid() then return end
+            for className in pairs(WATCHED_CLASSES) do
+                primeCache(className)
+            end
         end)
     end)
 end
@@ -547,9 +546,7 @@ function utils.waitForReplication(inventory, countBefore, callback, maxWaitMs)
             callback(countBefore - current)
         else
             elapsed = elapsed + 100
-            ExecuteWithDelay(100, function()
-                ExecuteInGameThread(check)
-            end)
+            gthread.defer(100, check)
         end
     end
     check()

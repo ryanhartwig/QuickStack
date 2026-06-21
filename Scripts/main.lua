@@ -15,6 +15,7 @@ local ui = require("ui")
 local autolabel = require("autolabel")
 local network = require("network")
 local globalpull = require("globalpull")
+local gthread = require("gthread")
 local lang = require("lang")
 local L = lang.L
 
@@ -215,16 +216,12 @@ do
                     attempts, MAX_ATTEMPTS))
             else
                 -- Retry in 1 second
-                ExecuteWithDelay(1000, function()
-                    ExecuteInGameThread(tryWriteManifest)
-                end)
+                gthread.defer(1000, tryWriteManifest)
             end
         end
 
         -- Start polling after 1 second (give SN2ModSettings time to begin loading)
-        ExecuteWithDelay(1000, function()
-            ExecuteInGameThread(tryWriteManifest)
-        end)
+        gthread.defer(1000, tryWriteManifest)
     end
 end
 
@@ -615,10 +612,10 @@ local function doQuickStack()
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
     local swapCount = battery.doBatterySwap(pawn, playerInv)
 
-    -- Item stacking. With Infinite Range on (host/SP), route to all gated lockers map-wide
-    -- via the inventory subsystem; otherwise the proven nearby path. Clients fall back to
-    -- local range until the MP client->host routing path is probed.
-    local infiniteStack = config.InfiniteRange and globalpull.isHost()
+    -- Item stacking. With Infinite Range on, route to all gated lockers map-wide via the
+    -- inventory subsystem; otherwise the proven nearby path. Works on host AND client — the
+    -- subsystem move is server-authoritative (verified client-side at 600m, 2026-06-21).
+    local infiniteStack = config.InfiniteRange
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
     if #transferableItems > 0 then
         if infiniteStack then
@@ -1030,7 +1027,8 @@ local function doRestockOnly()
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
     -- Infinite range: pull consumables from ALL lockers map-wide via the subsystem.
-    local infinite = config.InfiniteRange and globalpull.isHost()
+    -- Works on host AND client (server-authoritative subsystem moves).
+    local infinite = config.InfiniteRange
     local candidates, restockMoveFn
     if infinite then
         candidates = globalpull.buildRestockCandidates()
@@ -1113,7 +1111,7 @@ local function registerKey(keyStr)
     RegisterKeyBind(keyConst, function()
         local action = activeBindings[keyStr]
         if not action then return end
-        ExecuteInGameThread(function()
+        gthread.run(function()
             if isTextInputFocused() then return end
             local now = os.clock()
             if now - lastActivation < config.Cooldown then return end
@@ -1121,10 +1119,8 @@ local function registerKey(keyStr)
             autolabel.suppress = true
             action()
             -- Delay clearing to cover async callbacks (waitForReplication)
-            ExecuteWithDelay(2000, function()
-                ExecuteInGameThread(function()
-                    autolabel.suppress = false
-                end)
+            gthread.defer(2000, function()
+                autolabel.suppress = false
             end)
         end)
     end)
@@ -1152,22 +1148,18 @@ rebuildBindings()
 -- Delayed refresh: pick up SN2ModSettings values after it loads.
 -- QuickStack loads before SN2ModSettings alphabetically (Q < S), so shared
 -- variables aren't populated yet at require() time.
-ExecuteWithDelay(3000, function()
-    ExecuteInGameThread(function()
-        config.refreshModSettings()
-        rebuildBindings()
-    end)
+gthread.defer(3000, function()
+    config.refreshModSettings()
+    rebuildBindings()
 end)
 
 -- Refresh settings when ESC is pressed (covers closing SN2ModSettings/pause menu).
 -- This replaces the old per-keypress refreshModSettings(), which read 25 SharedVariables
 -- (~8ms each = ~200ms stutter) on every quickstack.
 RegisterKeyBind(Key.ESCAPE, function()
-    ExecuteWithDelay(500, function()
-        ExecuteInGameThread(function()
-            config.refreshModSettings()
-            rebuildBindings()
-        end)
+    gthread.defer(500, function()
+        config.refreshModSettings()
+        rebuildBindings()
     end)
 end)
 
@@ -1226,10 +1218,8 @@ do
                     lastAutoSort = now
                     autolabel.suppress = true
                     doQuickStack()
-                    ExecuteWithDelay(2000, function()
-                        ExecuteInGameThread(function()
-                            autolabel.suppress = false
-                        end)
+                    gthread.defer(2000, function()
+                        autolabel.suppress = false
                     end)
                 end
             end

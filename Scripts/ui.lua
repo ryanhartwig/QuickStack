@@ -2,6 +2,7 @@
 --- Handles the visual panel showing transfer results with animations
 
 local UEHelpers = require("UEHelpers")
+local gthread = require("gthread")
 
 local ui = {}
 local config = nil
@@ -221,14 +222,12 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
     local animSteps = 12
     local animInterval = 33
     for step = 1, animSteps do
-        ExecuteWithDelay(step * animInterval, function()
-            ExecuteInGameThread(function()
-                if activeSummaryPanel ~= root then return end
-                local t = step / animSteps
-                local eased = 1 - (1 - t) * (1 - t) * (1 - t)
-                pcall(function() vbox:SetRenderOpacity(eased) end)
-                pcall(function() vbox:SetRenderTranslation({ X = 250 * slideDir * (1 - eased), Y = 0 }) end)
-            end)
+        gthread.defer(step * animInterval, function()
+            if activeSummaryPanel ~= root then return end
+            local t = step / animSteps
+            local eased = 1 - (1 - t) * (1 - t) * (1 - t)
+            pcall(function() vbox:SetRenderOpacity(eased) end)
+            pcall(function() vbox:SetRenderTranslation({ X = 250 * slideDir * (1 - eased), Y = 0 }) end)
         end)
     end
 
@@ -239,22 +238,18 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
     local fadeStart = duration - fadeDuration
 
     for step = 1, fadeSteps do
-        ExecuteWithDelay(fadeStart + step * fadeInterval, function()
-            ExecuteInGameThread(function()
-                if activeSummaryPanel ~= root then return end
-                local t = step / fadeSteps
-                pcall(function() vbox:SetRenderOpacity(1 - t) end)
-            end)
+        gthread.defer(fadeStart + step * fadeInterval, function()
+            if activeSummaryPanel ~= root then return end
+            local t = step / fadeSteps
+            pcall(function() vbox:SetRenderOpacity(1 - t) end)
         end)
     end
 
-    ExecuteWithDelay(duration, function()
-        ExecuteInGameThread(function()
-            if activeSummaryPanel == root then
-                pcall(function() root:RemoveFromViewport() end)
-                activeSummaryPanel = nil
-            end
-        end)
+    gthread.defer(duration, function()
+        if activeSummaryPanel == root then
+            pcall(function() root:RemoveFromViewport() end)
+            activeSummaryPanel = nil
+        end
     end)
 end
 
