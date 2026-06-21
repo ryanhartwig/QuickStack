@@ -68,6 +68,7 @@ function autolabel.init(cfg)
     local playerInvId = nil
 
     local _alFires, _alMisses, _alMissTime = 0, 0, 0  -- [DIAG]
+    local _lastResolve = 0  -- storm guard: throttle the expensive open-container resolution
 
     RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
         _alFires = _alFires + 1  -- [DIAG]
@@ -99,6 +100,14 @@ function autolabel.init(cfg)
         -- first-boot SN2ModSettings default) self-heals instead of permanently bailing.
         if hookInvId ~= cache.invId then
             _alMisses = _alMisses + 1  -- [DIAG]
+            -- Storm guard: a client join / world load replicates inventory contents across every
+            -- locker, firing this hook thousands of times with no container open. Resolving the open
+            -- container (FindAllOf) + reading auto_label_max (an ~8ms SN2ModSettings SharedVariable)
+            -- on every new inventory froze big bases ("endless load"). Cap the expensive resolution
+            -- to ~10x/sec; a real manual deposit fires only a handful of times so this is invisible.
+            local nowc = os.clock()
+            if nowc - _lastResolve < 0.1 then return end
+            _lastResolve = nowc
             local _mt = os.clock()  -- [DIAG]
             config.refreshOne("auto_label_max")
             _alMissTime = _alMissTime + (os.clock() - _mt)  -- [DIAG]
