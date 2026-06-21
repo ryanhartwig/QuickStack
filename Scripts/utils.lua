@@ -86,7 +86,7 @@ function utils.MetersToUnits(meters)
     return meters * 100
 end
 
---- Actor caches: prime once with FindAllOf (~10ms), then NotifyOnNewObject keeps them
+--- Actor caches: prime once with FindAllOf (~10ms), then RegisterBeginPlayPostHook keeps them
 --- fresh and IsValid() prunes destroyed actors. Per-press discovery cost is ~0ms.
 --- (SphereOverlapActors was tried and abandoned: ~13ms/call at base density vs flat
 --- ~10ms FindAllOf, and StaticFindObject MISSES cost ~14ms each — see probe docs.)
@@ -101,20 +101,57 @@ local WATCHED_CLASSES = {
     BP_FloatingLocker_Carryable_C = "/Game/Blueprints/Items/Deployables/BP_FloatingLocker_Carryable.BP_FloatingLocker_Carryable_C",
 }
 
-for className, path in pairs(WATCHED_CLASSES) do
+for className in pairs(WATCHED_CLASSES) do
     _actorCache[className] = { actors = {}, primed = false }
-    NotifyOnNewObject(path, function(obj)
-        -- Skip class default objects / archetypes
-        local isTemplate = false
-        pcall(function()
-            local n = obj:GetFullName()
-            isTemplate = (n:find("Default__") ~= nil)
-        end)
-        if not isTemplate then
-            table.insert(_actorCache[className].actors, obj)
-        end
-    end)
 end
+
+-- Keep caches fresh as actors stream in. We previously used NotifyOnNewObject, but UE4SS dispatches
+-- that on the async LOADING thread for cell-streamed actors (RE-UE4SS #317) -- it crashed clients
+-- joining a locker-heavy base, because the streaming wave ran Lua off the game-thread mutex while
+-- UE4SS built the actor wrapper. RegisterBeginPlayPostHook is mutex-serialized on the game thread
+-- (apiref/ue4ss-core.md), so it is safe under streaming. It fires for EVERY actor, so the class
+-- match is memoized: IsA / name-match runs once per concrete class, then it is a table lookup.
+local _nativeClasses = {}  -- bucket key -> UClass (polymorphic; IsA catches subclasses like BP_Locker_Floor_C)
+for _, key in ipairs({ "SN2Locker", "UWEPowerTerminal" }) do
+    local cls = StaticFindObject(WATCHED_CLASSES[key])
+    if cls then _nativeClasses[key] = cls end
+end
+local _leafClassNames = {  -- concrete Blueprint class name -> bucket key (leaf classes; no UClass needed)
+    BP_Tailing_Chest_C            = "BP_Tailing_Chest_C",
+    BP_Haul_TadpoleChassis_C      = "BP_Haul_TadpoleChassis_C",
+    BP_FloatingLocker_Carryable_C = "BP_FloatingLocker_Carryable_C",
+}
+local _classBucket = {}  -- concrete class name -> bucket key, or false to ignore (memoized)
+
+local function bucketForActor(actor)
+    local cname
+    if not pcall(function() cname = actor:GetClass():GetFName():ToString() end) then return nil end
+    local memo = _classBucket[cname]
+    if memo ~= nil then return memo or nil end
+    local bucket = _leafClassNames[cname] or false
+    if not bucket then
+        for key, cls in pairs(_nativeClasses) do
+            local isa = false
+            pcall(function() isa = actor:IsA(cls) end)
+            if isa then bucket = key; break end
+        end
+    end
+    _classBucket[cname] = bucket
+    return bucket or nil
+end
+
+RegisterBeginPlayPostHook(function(ctx)
+    local actor = ctx
+    if not pcall(function() return actor:GetClass() end) then
+        local ok, unwrapped = pcall(function() return ctx:get() end)
+        if not ok then return end
+        actor = unwrapped
+    end
+    local bucket = bucketForActor(actor)
+    if not bucket then return end
+    local cache = _actorCache[bucket]
+    if cache then table.insert(cache.actors, actor) end
+end)
 
 --- Lazily prime a cache with pre-existing instances (covers hot reload mid-game and
 --- actors created before the notify registration). Deduped by full name.
