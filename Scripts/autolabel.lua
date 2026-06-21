@@ -67,7 +67,13 @@ function autolabel.init(cfg)
     -- Cache player inventory ID to skip hook fires for player inventory (item pulls)
     local playerInvId = nil
 
+    local _alFires, _alMisses, _alMissTime = 0, 0, 0  -- [DIAG]
+
     RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
+        _alFires = _alFires + 1  -- [DIAG]
+        if _alFires % 100 == 0 then  -- [DIAG]
+            utils.diag(string.format("[DIAG] autolabel fires=%d misses=%d refreshTime=%.0fms", _alFires, _alMisses, _alMissTime * 1000))
+        end
         if autolabel.suppress then return end
 
         local t0 = autolabel.debug and os.clock() or 0
@@ -92,7 +98,10 @@ function autolabel.init(cfg)
         -- runs HERE -- before any disabled bail -- so a stale-0 auto_label_max (e.g. the
         -- first-boot SN2ModSettings default) self-heals instead of permanently bailing.
         if hookInvId ~= cache.invId then
+            _alMisses = _alMisses + 1  -- [DIAG]
+            local _mt = os.clock()  -- [DIAG]
             config.refreshOne("auto_label_max")
+            _alMissTime = _alMissTime + (os.clock() - _mt)  -- [DIAG]
             if (config.AutoLabelMax or 0) <= 0 then
                 cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
                 if autolabel.debug then

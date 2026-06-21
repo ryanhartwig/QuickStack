@@ -2,6 +2,15 @@ local UEHelpers = require("UEHelpers")
 local gthread = require("gthread")
 local utils = {}
 
+-- TEMP join-hang diagnostic: append + flush to a file (survives a hang, unlike the buffered
+-- UE4SS.log). Remove this and all [DIAG] instrumentation once the cause is found.
+function utils.diag(msg)
+    pcall(function()
+        local f = io.open("QuickStack_join_diag.log", "a")
+        if f then f:write(tostring(msg) .. "\n"); f:close() end
+    end)
+end
+
 --- Calculate 3D distance between two actors
 ---@param actorA userdata Actor with K2_GetActorLocation
 ---@param actorB userdata Actor with K2_GetActorLocation
@@ -140,7 +149,10 @@ local function bucketForActor(actor)
     return bucket or nil
 end
 
+local _bpCount = 0  -- [DIAG]
 RegisterBeginPlayPostHook(function(ctx)
+    _bpCount = _bpCount + 1  -- [DIAG]
+    if _bpCount % 2000 == 0 then utils.diag("[DIAG] beginplay dispatches=" .. _bpCount) end  -- [DIAG]
     local actor = ctx
     if not pcall(function() return actor:GetClass() end) then
         local ok, unwrapped = pcall(function() return ctx:get() end)
@@ -195,6 +207,8 @@ end
 -- World/save switch: nil out cached UObject refs (Lua-only, no UObject access in
 -- teardown hooks — IsValid() on freed objects crashes), then schedule a re-prime.
 RegisterLoadMapPostHook(function()
+    utils.diag("[DIAG] === MAP LOAD (join start) ===")  -- [DIAG]
+    _bpCount = 0  -- [DIAG]
     for _, cache in pairs(_actorCache) do
         cache.actors = {}
         cache.primed = false
