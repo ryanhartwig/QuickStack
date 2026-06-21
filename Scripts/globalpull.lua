@@ -68,8 +68,22 @@ local function getLockerClass()
     return nil
 end
 
---- Only the host has authoritative global inventory data. Clients fall back to local
---- range until the MP client→host routing path is probed (Q-D, Ruby's rig).
+--- Inventory-id scan bound. On the host, ss.HighestInventoryId is the authoritative
+--- allocation counter (tight). On a CLIENT it does NOT replicate and reads 0, so fall back
+--- to a generous fixed ceiling — the always-relevant storage data IS on the client, we just
+--- can't use the server's counter to bound the scan. (Verified in-game 2026-06-21: client
+--- read + moved far lockers, but HighestInventoryId was 0.)
+local CLIENT_SCAN_CEILING = 8192
+local function getScanBound(ss)
+    local n = ss.HighestInventoryId or 0
+    if n <= 0 then n = CLIENT_SCAN_CEILING end
+    return n
+end
+
+--- Host vs client. NOTE: network.isHost() (FindFirstOf UWESaveGame) is unreliable — it
+--- returns true on clients too (UWESaveGame replicates). No longer used to gate global pull
+--- (clients can run it directly: subsystem moves are server-authoritative). Kept for callers
+--- that still want a best-effort check.
 function globalpull.isHost()
     return network.isHost()
 end
@@ -162,7 +176,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
 
     -- Enumerate gated targets and snapshot each (type-count + capacity + routing label).
     local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
-    local N = ss.HighestInventoryId or 0
+    local N = getScanBound(ss)
     for id = 1, N do
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
             local routing = parseRoutingLabel(_labelRegistry[id])
@@ -193,6 +207,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     if #targetIds == 0 then return 0, 0, false, {} end
 
     local containersUsed, someFull, transferDetails = {}, false, {}
+    local movedCount = 0
     for _, item in ipairs(transferableItems) do
         local bestLabelScore, bestLabelIdx = 0, nil
         local bestUnlabeledIdx, bestUnlabeledCount = nil, 0
@@ -228,6 +243,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
         if bestIdx then
             local id = targetIds[bestIdx]
             if globalpull.move(item.itemId, item.inventoryId, id) then
+                movedCount = movedCount + 1
                 containersUsed[bestIdx] = true
                 -- Count a NEW slot only when the type wasn't already present (same-type
                 -- moves usually merge into the existing stack — no new slot consumed).
@@ -240,11 +256,12 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
         end
     end
 
-    local afterItems = playerInv:GetItems()
-    local actualTransferred = totalItemsBefore - #afterItems
+    -- Count confirmed (server-authoritative) moves rather than the player-inventory delta:
+    -- on a CLIENT the local inventory count lags replication, so the delta under-reports.
+    -- Each globalpull.move returns the real server result, so movedCount is accurate everywhere.
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
-    return actualTransferred, numContainers, someFull, transferDetails
+    return movedCount, numContainers, someFull, transferDetails
 end
 
 local function getPlayerInvId()
@@ -267,7 +284,7 @@ function globalpull.buildRestockCandidates()
     local playerInvId = getPlayerInvId()
 
     local candidates = {}
-    local N = ss.HighestInventoryId or 0
+    local N = getScanBound(ss)
     for id = 1, N do
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
             pcall(function()
@@ -311,7 +328,7 @@ function globalpull.overflowDump(playerInv, remainingItems)
 
     -- Enumerate %o-labeled gated lockers (overflow targets).
     local ids, count, maxItems, labels = {}, {}, {}, {}
-    local N = ss.HighestInventoryId or 0
+    local N = getScanBound(ss)
     for id = 1, N do
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
             local raw = _labelRegistry[id]
