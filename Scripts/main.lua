@@ -15,6 +15,7 @@ local ui = require("ui")
 local autolabel = require("autolabel")
 local network = require("network")
 local globalpull = require("globalpull")
+local labelcache = require("labelcache")
 local gthread = require("gthread")
 local lang = require("lang")
 local L = lang.L
@@ -25,6 +26,7 @@ restock.init(config)
 ui.init(config)
 autolabel.init(config)
 globalpull.init(config)
+utils.setLockerStreamInHandler(labelcache.enqueueLocker)
 
 local VERSION = "4.2.0-dev"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))

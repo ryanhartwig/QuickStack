@@ -140,6 +140,11 @@ local function bucketForActor(actor)
     return bucket or nil
 end
 
+-- Optional stream-in handler (label-cache capture). Wired via utils.setLockerStreamInHandler so
+-- utils need not require labelcache (avoids a circular require; main.lua connects them).
+local _onLockerStreamIn = nil
+function utils.setLockerStreamInHandler(fn) _onLockerStreamIn = fn end
+
 RegisterBeginPlayPostHook(function(ctx)
     local actor = ctx
     if not pcall(function() return actor:GetClass() end) then
@@ -151,6 +156,9 @@ RegisterBeginPlayPostHook(function(ctx)
     if not bucket then return end
     local cache = _actorCache[bucket]
     if cache then table.insert(cache.actors, actor) end
+    if bucket == "SN2Locker" and _onLockerStreamIn then
+        pcall(function() _onLockerStreamIn(actor) end)  -- trivial enqueue; capture is batch-pumped
+    end
 end)
 
 --- Lazily prime a cache with pre-existing instances (covers hot reload mid-game and
