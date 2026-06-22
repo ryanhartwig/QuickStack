@@ -68,7 +68,6 @@ function autolabel.init(cfg)
     -- Cache player inventory ID to skip hook fires for player inventory (item pulls)
     local playerInvId = nil
 
-    local _alFires, _alMisses, _alMissTime = 0, 0, 0  -- [DIAG]
     local _lastResolve = 0  -- storm guard: throttle the expensive open-container resolution
 
     -- Lazy registration: OnItemAddedToInventory is extremely hot -- a client join / world load
@@ -83,10 +82,6 @@ function autolabel.init(cfg)
     local function activateItemHook()
         if _itemHookIds then return end
         local _ihPre, _ihPost = RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
-        _alFires = _alFires + 1  -- [DIAG]
-        if _alFires % 100 == 0 then  -- [DIAG]
-            utils.diag(string.format("[DIAG] autolabel fires=%d misses=%d refreshTime=%.0fms", _alFires, _alMisses, _alMissTime * 1000))
-        end
         if autolabel.suppress then return end
 
         local t0 = autolabel.debug and os.clock() or 0
@@ -111,7 +106,6 @@ function autolabel.init(cfg)
         -- runs HERE -- before any disabled bail -- so a stale-0 auto_label_max (e.g. the
         -- first-boot SN2ModSettings default) self-heals instead of permanently bailing.
         if hookInvId ~= cache.invId then
-            _alMisses = _alMisses + 1  -- [DIAG]
             -- Storm guard: a client join / world load replicates inventory contents across every
             -- locker, firing this hook thousands of times with no container open. Resolving the open
             -- container (FindAllOf) + reading auto_label_max (an ~8ms SN2ModSettings SharedVariable)
@@ -120,9 +114,7 @@ function autolabel.init(cfg)
             local nowc = os.clock()
             if nowc - _lastResolve < 0.1 then return end
             _lastResolve = nowc
-            local _mt = os.clock()  -- [DIAG]
             config.refreshOne("auto_label_max")
-            _alMissTime = _alMissTime + (os.clock() - _mt)  -- [DIAG]
             if (config.AutoLabelMax or 0) <= 0 then
                 cache = { invId = hookInvId, owner = nil, names = nil, rawLabel = nil }
                 if autolabel.debug then
