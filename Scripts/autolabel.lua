@@ -6,6 +6,7 @@
 local UEHelpers = require("UEHelpers")
 local utils = require("utils")
 local network = require("network")
+local gthread = require("gthread")
 local config = nil
 local autolabel = {}
 
@@ -78,6 +79,7 @@ function autolabel.init(cfg)
     -- the dispatch). So keep it DORMANT during reconciliation: register only when the player opens a
     -- container, and drop it on every (re)load so each join is clean.
     local _itemHookIds = nil
+    local _loadGen = 0
     local function activateItemHook()
         if _itemHookIds then return end
         local _ihPre, _ihPost = RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
@@ -232,15 +234,18 @@ function autolabel.init(cfg)
         _itemHookIds = nil
     end
 
-    -- Arm when the player interacts with a container (a deliberate, low-frequency action that never
-    -- happens during a reconciliation storm); disarm on every (re)load so the next join is clean.
-    -- If OnInteractWithOtherInventory ever fails to hook, autolabel simply stays dormant -- the join
-    -- is still fixed (the only requirement is that the per-item hook is absent during reconciliation).
-    RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnInteractWithOtherInventory", function()
-        activateItemHook()
-    end)
+    -- Keep the per-item hook dormant through the client-join inventory-reconciliation storm, then arm
+    -- it after a settle delay. Without the hook the client drains reconciliation in seconds, so 30s is
+    -- comfortably past it; gen-checked so a newer (re)load cancels a pending arm rather than arming
+    -- mid-reconciliation. (A container-open UFunction would be a more precise trigger, but
+    -- OnInteractWithOtherInventory is a delegate, not hookable in this build.)
     RegisterLoadMapPostHook(function()
+        _loadGen = _loadGen + 1
         deactivateItemHook()
+        local gen = _loadGen
+        gthread.defer(30000, function()
+            if gen == _loadGen then activateItemHook() end
+        end)
     end)
 end
 
