@@ -98,10 +98,10 @@ function globalpull.harvestLabels()
             local inv = actor.Inventory
             if inv and inv:IsValid() then
                 local id = inv.InventoryId
-                local label = utils.getLockerLabel(actor)
-                if label and label ~= "" then
-                    _labelRegistry[id] = label
-                end
+                -- Record EVERY loaded locker (even blank) so routing can tell "known" (loaded &
+                -- read this session) from "unknown" (never seen). Fail-closed routing depends on
+                -- this distinction: a blank label is "" (a valid type-count target), unknown is nil.
+                _labelRegistry[id] = utils.getLockerLabel(actor) or ""
             end
         end)
     end
@@ -178,7 +178,11 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
     local N = getScanBound(ss)
     for id = 1, N do
-        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+        -- FAIL-CLOSED: a locker is a candidate ONLY if we KNOW its label (loaded & harvested this
+        -- session). An unknown far locker (_labelRegistry[id]==nil) is dropped entirely -- we can't
+        -- verify it isn't a "%x" (no-stack) locker, so type-count guessing is unsafe. (Planned
+        -- label-sync will supply far-locker labels; until then, far-unknown -> skip, never deposit.)
+        if isDepositTarget(ss, id, playerInvId, lockerClass) and _labelRegistry[id] ~= nil then
             local routing = parseRoutingLabel(_labelRegistry[id])
             if routing ~= "skip" then
                 local idx = #targetIds + 1
