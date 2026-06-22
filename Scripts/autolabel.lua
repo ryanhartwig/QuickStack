@@ -70,7 +70,17 @@ function autolabel.init(cfg)
     local _alFires, _alMisses, _alMissTime = 0, 0, 0  -- [DIAG]
     local _lastResolve = 0  -- storm guard: throttle the expensive open-container resolution
 
-    RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
+    -- Lazy registration: OnItemAddedToInventory is extremely hot -- a client join / world load
+    -- replicates the whole base's inventory, firing it thousands of times. Merely having the hook
+    -- REGISTERED makes UE4SS marshal params + enter Lua for every fire, so the client can't drain
+    -- the reconciliation backlog and the load never finishes ("endless load"; confirmed: 6700+ cheap
+    -- fires and climbing while the screen froze -- the callback being cheap doesn't help, the cost is
+    -- the dispatch). So keep it DORMANT during reconciliation: register only when the player opens a
+    -- container, and drop it on every (re)load so each join is clean.
+    local _itemHookIds = nil
+    local function activateItemHook()
+        if _itemHookIds then return end
+        local _ihPre, _ihPost = RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", function(self, inventoryId, inventoryItem)
         _alFires = _alFires + 1  -- [DIAG]
         if _alFires % 100 == 0 then  -- [DIAG]
             utils.diag(string.format("[DIAG] autolabel fires=%d misses=%d refreshTime=%.0fms", _alFires, _alMisses, _alMissTime * 1000))
@@ -210,6 +220,27 @@ function autolabel.init(cfg)
             print(string.format("[QS-AL] SET invId=%s name=%s n=%d max=%d host=%s dt=%.2fms\n",
                 tostring(hookInvId), newName, #cache.names, maxLabels, tostring(network.isHost()), (os.clock() - t0) * 1000))
         end
+        end)
+        _itemHookIds = { _ihPre, _ihPost }
+    end
+
+    local function deactivateItemHook()
+        if not _itemHookIds then return end
+        pcall(function()
+            UnregisterHook("/Script/UWEInventory.UWEInventoryComponent:OnItemAddedToInventory", _itemHookIds[1], _itemHookIds[2])
+        end)
+        _itemHookIds = nil
+    end
+
+    -- Arm when the player interacts with a container (a deliberate, low-frequency action that never
+    -- happens during a reconciliation storm); disarm on every (re)load so the next join is clean.
+    -- If OnInteractWithOtherInventory ever fails to hook, autolabel simply stays dormant -- the join
+    -- is still fixed (the only requirement is that the per-item hook is absent during reconciliation).
+    RegisterHook("/Script/UWEInventory.UWEInventoryComponent:OnInteractWithOtherInventory", function()
+        activateItemHook()
+    end)
+    RegisterLoadMapPostHook(function()
+        deactivateItemHook()
     end)
 end
 
