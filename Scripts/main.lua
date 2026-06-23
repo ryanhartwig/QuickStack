@@ -57,6 +57,9 @@ do
           type="keybind", default="H" },
 
         -- Stacking
+        { key="infinite_range", title='%s',
+          description='%s',
+          type="toggle", default=false },
         { key="radius", title='%s',
           description='%s',
           type="slider", default=25, min=5, max=235, step=5, format="integer" },
@@ -150,6 +153,7 @@ do
         esc(L("keybind_open_title")), esc(L("keybind_open_desc")),
         esc(L("keybind_overflow_title")), esc(L("keybind_overflow_desc")),
         -- Stacking
+        esc(L("infinite_range_title")), esc(L("infinite_range_desc")),
         esc(L("radius_title")), esc(L("radius_desc")),
         esc(L("stack_tools_title")), esc(L("stack_tools_desc")),
         esc(L("stack_equip_title")), esc(L("stack_equip_desc")),
@@ -618,6 +622,12 @@ local function doQuickStack()
     -- inventory subsystem; otherwise the proven nearby path. Works on host AND client — the
     -- subsystem move is server-authoritative (verified client-side at 600m, 2026-06-21).
     local infiniteStack = config.InfiniteRange
+    if infiniteStack then
+        -- Live labels for currently-loaded lockers before the global scans: keeps loaded lockers
+        -- routing on their CURRENT label (the event cache goes stale on MP clients + empty after a
+        -- warm reload) and re-admits loaded lockers if the cache was reset. Far lockers use the cache.
+        labelcache.refreshLoaded()
+    end
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
     if #transferableItems > 0 then
         if infiniteStack then
@@ -742,9 +752,11 @@ local function doQuickStack()
 
     -- Pass 2: Overflow dump (only if overflow lockers exist and items remain)
     local function doOverflowPass(pass1Transferred, pass1Containers)
-        -- Infinite range: dump leftovers to %o lockers map-wide via the subsystem.
-        -- Host/SP only (infiniteStack already implies host), so moves are synchronous and
-        -- authoritative — no replication wait needed.
+        -- Infinite range: dump leftovers to %o lockers map-wide via the subsystem. This runs on
+        -- clients too -- infiniteStack is a config toggle, NOT a host gate (the isHost gate was
+        -- deliberately removed). getTransferableItems re-reads the locally-lagging inventory, but
+        -- each globalpull.move returns the server-authoritative result so moved counts stay correct;
+        -- a leftover that already replicated away simply isn't re-dumped. No replication wait needed.
         if infiniteStack then
             local remainingItems = getTransferableItems(playerInv)
             if #remainingItems == 0 then

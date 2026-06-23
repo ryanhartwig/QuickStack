@@ -91,6 +91,10 @@ strings.en = {
     stack_consum_title    = "Stack Consumables",
     stack_consum_desc     = "Allow food, water, and medical items to be quick-stacked out of your inventory.",
 
+    -- Infinite range
+    infinite_range_title  = "Use Infinite Range",
+    infinite_range_desc   = "Quick-stack into matching base lockers anywhere on the map, not just nearby ones. Only deposits into lockers whose label is known from this session; far lockers with unknown labels are skipped for safety.",
+
     -- Label routing
     label_routing_title   = "Label Routing",
     label_routing_desc    = "Route items to lockers based on their label text. Disable to use type-matching only.",

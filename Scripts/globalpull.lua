@@ -11,6 +11,7 @@ local utils      = require("utils")
 local matching   = require("matching")
 local network    = require("network")
 local categories = require("categories")
+local labelcache = require("labelcache")
 
 local globalpull = {}
 local config = nil
@@ -30,10 +31,8 @@ local LOOT_DENY = {
 local _ss = nil
 local _lockerClass = nil
 
--- Session label registry: inventoryId -> raw label string. Labels are actor-bound
--- (UGCComponent), so they're only known for lockers loaded this session. Cleared on
--- map load. Never persisted (no cross-reload ID-instability risk).
-local _labelRegistry = {}
+-- Label source is the labelcache module (host capture; later disk + client sync). Routing is
+-- fail-closed: only lockers whose label is KNOWN (present in the cache) are candidates.
 
 function globalpull.init(cfg)
     config = cfg
@@ -41,7 +40,6 @@ end
 
 -- Lua-only reset; safe inside the map-load teardown hook (no UObject access).
 RegisterLoadMapPostHook(function()
-    _labelRegistry = {}
     _ss = nil
     _lockerClass = nil
 end)
@@ -68,17 +66,11 @@ local function getLockerClass()
     return nil
 end
 
---- Inventory-id scan bound. On the host, ss.HighestInventoryId is the authoritative
---- allocation counter (tight). On a CLIENT it does NOT replicate and reads 0, so fall back
---- to a generous fixed ceiling — the always-relevant storage data IS on the client, we just
---- can't use the server's counter to bound the scan. (Verified in-game 2026-06-21: client
---- read + moved far lockers, but HighestInventoryId was 0.)
-local CLIENT_SCAN_CEILING = 8192
-local function getScanBound(ss)
-    local n = ss.HighestInventoryId or 0
-    if n <= 0 then n = CLIENT_SCAN_CEILING end
-    return n
-end
+-- NOTE: global scans no longer sweep 1..HighestInventoryId. They iterate labelcache.knownIds()
+-- (the lockers we've captured) — the fail-closed candidate domain, and far cheaper than probing
+-- every id via the subsystem. This also sidesteps the client HighestInventoryId=0 problem (the
+-- counter doesn't replicate to clients), since the cache is populated from loaded actors, not
+-- the server counter. (HighestInventoryId=0 on client verified in-game 2026-06-21.)
 
 --- Host vs client. NOTE: network.isHost() (FindFirstOf UWESaveGame) is unreliable — it
 --- returns true on clients too (UWESaveGame replicates). No longer used to gate global pull
@@ -86,25 +78,6 @@ end
 --- that still want a best-effort check.
 function globalpull.isHost()
     return network.isHost()
-end
-
---- Harvest labels from currently-loaded locker actors into the session registry.
---- Cheap (tens of loaded actors). Far lockers reuse whatever was harvested while near.
-function globalpull.harvestLabels()
-    local lockers = utils.getLoadedActors("SN2Locker")
-    if not lockers then return end
-    for _, actor in ipairs(lockers) do
-        pcall(function()
-            local inv = actor.Inventory
-            if inv and inv:IsValid() then
-                local id = inv.InventoryId
-                -- Record EVERY loaded locker (even blank) so routing can tell "known" (loaded &
-                -- read this session) from "unknown" (never seen). Fail-closed routing depends on
-                -- this distinction: a blank label is "" (a valid type-count target), unknown is nil.
-                _labelRegistry[id] = utils.getLockerLabel(actor) or ""
-            end
-        end)
-    end
 end
 
 --- Two-factor safety gate: inventory is valid, not the player's, and its actor class is
@@ -125,6 +98,12 @@ local function isDepositTarget(ss, id, playerInvId, lockerClass)
     local isLocker = false
     pcall(function() isLocker = cls:IsChildOf(lockerClass) end)
     if isLocker then return true end
+    -- The tailing chest is accepted here for parity with the nearby path, but it can never reach
+    -- this scan under infinite range: it isn't an SN2Locker subclass and stores its inventory on
+    -- .UWEInventory, so the labelcache never captures it (and knownIds() drives every scan). Do NOT
+    -- "fix" that by feeding chest ids straight to the subsystem -- GetActorClassForInventory ->
+    -- GetFName faults on a chest inventory (uncatchable by pcall; crashed the game while probing,
+    -- 2026-06-23). Chests stay nearby-only under infinite range, documented in the release notes.
     return okN and name == CHEST_CLASS
 end
 
@@ -170,20 +149,17 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     local lockerClass = getLockerClass()
     if not lockerClass then return 0, 0, false, {} end
 
-    globalpull.harvestLabels()
-
     local playerInvId = playerInv.InventoryId
 
     -- Enumerate gated targets and snapshot each (type-count + capacity + routing label).
+    -- FAIL-CLOSED: candidates come ONLY from the labelcache (lockers whose label we KNOW:
+    -- captured while loaded this session / synced / persisted). Iterating knownIds (not 1..8192)
+    -- is also the per-press cost win — we never isDepositTarget an unknown id we'd just skip.
     local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
-    local N = getScanBound(ss)
-    for id = 1, N do
-        -- FAIL-CLOSED: a locker is a candidate ONLY if we KNOW its label (loaded & harvested this
-        -- session). An unknown far locker (_labelRegistry[id]==nil) is dropped entirely -- we can't
-        -- verify it isn't a "%x" (no-stack) locker, so type-count guessing is unsafe. (Planned
-        -- label-sync will supply far-locker labels; until then, far-unknown -> skip, never deposit.)
-        if isDepositTarget(ss, id, playerInvId, lockerClass) and _labelRegistry[id] ~= nil then
-            local routing = parseRoutingLabel(_labelRegistry[id])
+    for _, id in ipairs(labelcache.knownIds()) do
+        local entry = labelcache.get(id)
+        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+            local routing = parseRoutingLabel(entry.label)
             if routing ~= "skip" then
                 local idx = #targetIds + 1
                 targetIds[idx] = id
@@ -288,8 +264,11 @@ function globalpull.buildRestockCandidates()
     local playerInvId = getPlayerInvId()
 
     local candidates = {}
-    local N = getScanBound(ss)
-    for id = 1, N do
+    -- Known lockers only (labelcache). On the HOST this is the same set in practice (relevancy
+    -- invariant: the host loads every locker any player is near). On a CLIENT the cache covers only
+    -- loaded (~150m) lockers until label-sync Phase 4 syncs the host registry -- far lockers are
+    -- skipped (fail-closed: a reach reduction, never a mis-route). Skips the 8192-id sweep either way.
+    for _, id in ipairs(labelcache.knownIds()) do
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
             pcall(function()
                 for _, it in ipairs(ss:GetItemsForInventory(id)) do
@@ -327,15 +306,15 @@ function globalpull.overflowDump(playerInv, remainingItems)
     if not lockerClass then return 0, 0, {} end
     if config.OverflowPrefix == "" then return 0, 0, {} end
 
-    globalpull.harvestLabels()
     local playerInvId = playerInv.InventoryId
 
-    -- Enumerate %o-labeled gated lockers (overflow targets).
+    -- Enumerate %o-labeled gated lockers (overflow targets). Known lockers only (labelcache) —
+    -- the %o check already required a cache entry, so this is the same set, minus the 8192 sweep.
     local ids, count, maxItems, labels = {}, {}, {}, {}
-    local N = getScanBound(ss)
-    for id = 1, N do
+    for _, id in ipairs(labelcache.knownIds()) do
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
-            local raw = _labelRegistry[id]
+            local entry = labelcache.get(id)
+            local raw = entry and entry.label
             if raw and raw:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
                 local idx = #ids + 1
                 ids[idx] = id
