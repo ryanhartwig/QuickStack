@@ -14,6 +14,15 @@ function ui.init(cfg)
     config = cfg
 end
 
+-- Logout / world switch orphans the active summary panel so its in-flight gthread.defer animation
+-- steps don't call a UFunction (SetRenderOpacity / RemoveFromViewport) on the widget AFTER teardown
+-- frees it -- an uncatchable ProcessEvent AV (held UObject ref across a deferred delay; the steps
+-- self-guard on activeSummaryPanel == root, so clearing it makes every pending step a no-op).
+-- Lua-only assignment -> safe inside the teardown hook.
+RegisterLoadMapPostHook(function()
+    activeSummaryPanel = nil
+end)
+
 --- Show the transfer summary panel
 --- transferDetails: normal transfers (item → locker)
 --- overflowDetails: overflow dumps (item → %o locker)
@@ -223,7 +232,9 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
     local animInterval = 33
     for step = 1, animSteps do
         gthread.defer(step * animInterval, function()
-            if activeSummaryPanel ~= root then return end
+            -- Skip if a newer panel replaced us OR the world tore down (flag cleared by the map hook
+            -- / widget freed). IsValid backstops the teardown race before LoadMapPostHook clears it.
+            if activeSummaryPanel ~= root or not root:IsValid() then return end
             local t = step / animSteps
             local eased = 1 - (1 - t) * (1 - t) * (1 - t)
             pcall(function() vbox:SetRenderOpacity(eased) end)
@@ -239,14 +250,14 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
 
     for step = 1, fadeSteps do
         gthread.defer(fadeStart + step * fadeInterval, function()
-            if activeSummaryPanel ~= root then return end
+            if activeSummaryPanel ~= root or not root:IsValid() then return end
             local t = step / fadeSteps
             pcall(function() vbox:SetRenderOpacity(1 - t) end)
         end)
     end
 
     gthread.defer(duration, function()
-        if activeSummaryPanel == root then
+        if activeSummaryPanel == root and root:IsValid() then
             pcall(function() root:RemoveFromViewport() end)
             activeSummaryPanel = nil
         end
