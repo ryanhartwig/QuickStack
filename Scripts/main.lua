@@ -633,10 +633,11 @@ local function doQuickStack()
         print(string.format("[QS-PERF] refresh=%.1fms\n", (os.clock() - _pr) * 1000))  -- TEMP QA perf
     end
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
+    local stackedIds = {}  -- itemIds the stack pass confirmed-moved; overflow excludes them (client-lag-proof)
     local _pf = os.clock()  -- TEMP QA perf
     if #transferableItems > 0 then
         if infiniteStack then
-            actualTransferred, numContainers, someFull, transferDetails = globalpull.stack(
+            actualTransferred, numContainers, someFull, transferDetails, stackedIds = globalpull.stack(
                 playerInv, transferableItems, totalItemsBefore)
         elseif #nearbyLockers > 0 then
             actualTransferred, numContainers, someFull, transferDetails = transferToLockers(
@@ -765,7 +766,16 @@ local function doQuickStack()
         -- each globalpull.move returns the server-authoritative result so moved counts stay correct;
         -- a leftover that already replicated away simply isn't re-dumped. No replication wait needed.
         if infiniteStack then
-            local remainingItems = getTransferableItems(playerInv)
+            -- Exclude items the stack pass already moved. On a CLIENT the local inventory lags
+            -- replication, so getTransferableItems still returns the just-stacked items; without this
+            -- filter the overflow pass re-moves them (the server resolves MoveInventoryItem by itemId)
+            -- OUT of their correct chest into %o. Authoritative fact = the stack move's own confirmed
+            -- return (stackedIds), not the lagging GetItems read.
+            local allRemaining = getTransferableItems(playerInv)
+            local remainingItems = {}
+            for _, it in ipairs(allRemaining) do
+                if not stackedIds[it.itemId] then remainingItems[#remainingItems + 1] = it end
+            end
             if #remainingItems == 0 then
                 finalize(pass1Transferred, pass1Containers, {})
                 return

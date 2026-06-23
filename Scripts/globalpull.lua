@@ -196,6 +196,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
 
     local containersUsed, someFull, transferDetails = {}, false, {}
     local movedCount = 0
+    local movedIds = {}  -- itemIds confirmed-moved this pass; the overflow pass excludes them (client-lag-proof)
     for _, item in ipairs(transferableItems) do
         local bestLabelScore, bestLabelIdx = 0, nil
         local bestUnlabeledIdx, bestUnlabeledCount = nil, 0
@@ -232,6 +233,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
             local id = targetIds[bestIdx]
             if globalpull.move(item.itemId, item.inventoryId, id) then
                 movedCount = movedCount + 1
+                movedIds[item.itemId] = true
                 containersUsed[bestIdx] = true
                 -- Count a NEW slot only when the type wasn't already present (same-type
                 -- moves usually merge into the existing stack — no new slot consumed).
@@ -249,7 +251,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     -- Each globalpull.move returns the real server result, so movedCount is accurate everywhere.
     local numContainers = 0
     for _ in pairs(containersUsed) do numContainers = numContainers + 1 end
-    return movedCount, numContainers, someFull, transferDetails
+    return movedCount, numContainers, someFull, transferDetails, movedIds
 end
 
 local function getPlayerInvId()
