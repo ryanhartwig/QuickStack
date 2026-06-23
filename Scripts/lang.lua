@@ -93,7 +93,7 @@ strings.en = {
 
     -- Infinite range
     infinite_range_title  = "Use Infinite Range",
-    infinite_range_desc   = "Quick-stack into matching base lockers anywhere on the map, not just nearby ones. Only deposits into lockers whose label is known from this session; far lockers with unknown labels are skipped for safety.",
+    infinite_range_desc   = "Quick-stack into matching base lockers anywhere on the map, not just nearby ones. Host / single-player only — on a multiplayer client this falls back to nearby lockers (full client support is planned for a later update). Only deposits into lockers whose label is known from this session.",
 
     -- Label routing
     label_routing_title   = "Label Routing",

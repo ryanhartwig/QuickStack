@@ -620,10 +620,15 @@ local function doQuickStack()
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
     local swapCount = battery.doBatterySwap(pawn, playerInv)
 
-    -- Item stacking. With Infinite Range on, route to all gated lockers map-wide via the
-    -- inventory subsystem; otherwise the proven nearby path. Works on host AND client — the
-    -- subsystem move is server-authoritative (verified client-side at 600m, 2026-06-21).
-    local infiniteStack = config.InfiniteRange
+    -- Item stacking. With Infinite Range on (HOST/SP ONLY), route to all gated lockers map-wide via
+    -- the inventory subsystem; otherwise the proven nearby path. A multiplayer CLIENT can't route the
+    -- global subsystem to far lockers (their labels live on culled actors it never loads -- full
+    -- client support = host-routing, the v5.1 follow-up), so on a client (no authority) we fall back
+    -- to nearby. pawn HasAuthority is true only on the listen-server host or single-player;
+    -- network.isHost (UWESaveGame) replicates to clients and is unreliable. Verified host-side 2026-06-23.
+    local hasAuthority = false
+    pcall(function() hasAuthority = pawn:HasAuthority() end)
+    local infiniteStack = config.InfiniteRange and hasAuthority
     if infiniteStack then
         -- Live labels for currently-loaded lockers before the global scans: keeps loaded lockers
         -- routing on their CURRENT label (the event cache goes stale on MP clients + empty after a
