@@ -613,7 +613,9 @@ local function doQuickStack()
 
     local transferableItems, totalItemsBefore = getTransferableItems(playerInv)
 
+    local _pd = os.clock()  -- TEMP QA perf
     local nearbyLockers, overflowLockers, excludedLockerInvs = utils.discoverNearbyContainers(pawn, radiusUnits, config)
+    print(string.format("[QS-PERF] discover=%.1fms\n", (os.clock() - _pd) * 1000))  -- TEMP QA perf
 
     -- Legacy swap for types not managed by a budget (doBatterySwap skips managed types)
     local swapCount = battery.doBatterySwap(pawn, playerInv)
@@ -626,9 +628,12 @@ local function doQuickStack()
         -- Live labels for currently-loaded lockers before the global scans: keeps loaded lockers
         -- routing on their CURRENT label (the event cache goes stale on MP clients + empty after a
         -- warm reload) and re-admits loaded lockers if the cache was reset. Far lockers use the cache.
+        local _pr = os.clock()  -- TEMP QA perf
         labelcache.refreshLoaded()
+        print(string.format("[QS-PERF] refresh=%.1fms\n", (os.clock() - _pr) * 1000))  -- TEMP QA perf
     end
     local actualTransferred, numContainers, someFull, transferDetails = 0, 0, false, {}
+    local _pf = os.clock()  -- TEMP QA perf
     if #transferableItems > 0 then
         if infiniteStack then
             actualTransferred, numContainers, someFull, transferDetails = globalpull.stack(
@@ -638,6 +643,8 @@ local function doQuickStack()
                 playerInv, transferableItems, totalItemsBefore, nearbyLockers)
         end
     end
+    print(string.format("[QS-PERF] stack=%.1fms (%s, %d targets)\n",
+        (os.clock() - _pf) * 1000, infiniteStack and "global" or "nearby", numContainers))  -- TEMP QA perf
 
     -- Restock runs with quickstack unless a separate restock keybind is configured
     local restockWithQuickstack = (config.KeybindRestock == "" or config.KeybindRestock == config.Keybind)
@@ -1131,7 +1138,9 @@ local function registerKey(keyStr)
             if now - lastActivation < config.Cooldown then return end
             lastActivation = now
             autolabel.suppress = true
+            local _pt = os.clock()  -- TEMP QA perf
             action()
+            print(string.format("[QS-PERF] TOTAL=%.1fms\n", (os.clock() - _pt) * 1000))  -- TEMP QA perf
             -- Delay clearing to cover async callbacks (waitForReplication)
             gthread.defer(2000, function()
                 autolabel.suppress = false
