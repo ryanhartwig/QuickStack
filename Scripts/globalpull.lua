@@ -15,7 +15,6 @@ local labelcache = require("labelcache")
 
 local globalpull = {}
 local config = nil
-local _QA = true  -- TEMP QA logging for the v5 MP regression pass (strip after)
 
 local DEFAULT_MAX_ITEMS = 30
 local CHEST_CLASS = "BP_Tailing_Chest_C"
@@ -157,14 +156,10 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     -- captured while loaded this session / synced / persisted). Iterating knownIds (not 1..8192)
     -- is also the per-press cost win — we never isDepositTarget an unknown id we'd just skip.
     local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
-    local ids = labelcache.knownIds()
-    local _seen, _skip = 0, 0  -- TEMP QA
-    for _, id in ipairs(ids) do
+    for _, id in ipairs(labelcache.knownIds()) do
         local entry = labelcache.get(id)
         if isDepositTarget(ss, id, playerInvId, lockerClass) then
-            _seen = _seen + 1  -- TEMP QA
             local routing = parseRoutingLabel(entry.label)
-            if routing == "skip" then _skip = _skip + 1 end  -- TEMP QA
             if routing ~= "skip" then
                 local idx = #targetIds + 1
                 targetIds[idx] = id
@@ -188,9 +183,6 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
             end
         end
     end
-
-    if _QA then print(string.format("[QS-QA] global stack: cache=%d seen=%d noStack(%%x/%%o)=%d targets=%d\n",
-        #ids, _seen, _skip, #targetIds)) end  -- TEMP QA
 
     if #targetIds == 0 then return 0, 0, false, {} end
 

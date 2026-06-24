@@ -591,8 +591,6 @@ function utils.waitForReplication(inventory, countBefore, callback, maxWaitMs)
     local function check()
         local current = #inventory:GetItems()
         if current < countBefore or elapsed >= maxWaitMs then
-            print(string.format("[QS-PERF] waitRepl=%dms drop=%d%s\n", elapsed, countBefore - current,
-                elapsed >= maxWaitMs and " TIMEOUT" or ""))  -- TEMP QA perf
             callback(countBefore - current)
         else
             elapsed = elapsed + 100
