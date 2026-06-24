@@ -1,6 +1,8 @@
 --- QuickStack: Label matching module
 --- Token-prefix scoring with word-coverage and CJK character tiebreaker
 
+local categorylabels = require("categorylabels")
+
 local matching = {}
 
 --- Split a display name into lowercased words + total char count (the per-name work).
@@ -20,6 +22,10 @@ end
 --- as scoreLockerMatch; split out so the per-name tokenization isn't repeated per label.
 function matching.scoreWithTokens(label, nameWords, totalNameChars)
     if #nameWords == 0 then return 0 end
+
+    -- Expand any category-name fragment into its item-fragment list (categorylabels). No-op when the
+    -- label contains no category fragment, so normal labels score exactly as before.
+    label = categorylabels.expand(label)
 
     local bestScore = 0
 
