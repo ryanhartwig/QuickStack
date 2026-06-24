@@ -119,7 +119,14 @@ local function parseRoutingLabel(rawLabel)
         return "skip"  -- overflow lockers aren't normal stack targets
     end
     if not config.LabelRouting then return nil end
-    if config.LabelPrefix == "" then return rawLabel end
+    if config.LabelPrefix == "" then
+        -- A blank/whitespace label is UNLABELED (nil), not an empty routing label. captureActor stores
+        -- `getLockerLabel(actor) or ""` as the cache's known-blank marker, so without this a blank locker
+        -- routed by type-count but the summary showed "" instead of "Unlabeled" (`"" or "Unlabeled"` ==
+        -- "", since "" is truthy). Mirrors the nearby path (utils.discoverNearbyContainers).
+        local t = rawLabel:match("^%s*(.-)%s*$")
+        return t ~= "" and t or nil
+    end
     local prefixLen = #config.LabelPrefix
     if rawLabel:sub(1, prefixLen) == config.LabelPrefix then
         local label = rawLabel:sub(prefixLen + 1):match("^%s*(.-)%s*$")
