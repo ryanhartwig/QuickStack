@@ -838,6 +838,14 @@ local function doQuickStack()
         local overflowContainerCount = 0
         for _ in pairs(overflowContainersUsed) do overflowContainerCount = overflowContainerCount + 1 end
 
+        -- Nothing actually overflowed -> there is no count drop to wait for, so skip the wait (it
+        -- would otherwise run the full timeout: the common "leftovers that don't fit / no %o move"
+        -- case, which dominated the client summary latency).
+        if overflowContainerCount == 0 then
+            finalize(pass1Transferred, pass1Containers, overflowDetails)
+            return
+        end
+
         -- Wait for overflow replication, then restock + show
         waitForReplication(playerInv, remainingCount, function(overflowTransferred)
             finalize(pass1Transferred + overflowTransferred, pass1Containers + overflowContainerCount, overflowDetails)

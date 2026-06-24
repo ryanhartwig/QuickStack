@@ -579,11 +579,14 @@ function utils.recordDetail(detailsTable, typeName, itemType, displayName, conta
     detailsTable[typeName].containers[containerLabel] = true
 end
 
---- Wait for server replication before reading inventory
---- Polls every 100ms until item count changes or timeout reached
---- Host: 0ms (instant). Non-host: ~100-200ms typical, 1500ms max.
+--- Wait for server replication before reading inventory.
+--- Polls every 100ms until the item count DROPS or the timeout is reached, then fires callback with
+--- the confirmed drop. Exits early on the first drop, so the cap only bounds the NO-drop case (a move
+--- that didn't replicate / nothing moved) — it can't slow a real move. Real client replication is
+--- ~100ms, so a 500ms cap is ample; 1500ms just made no-op waits feel broken.
+--- Host: 0ms (instant). Non-host: ~100ms typical, 500ms max.
 function utils.waitForReplication(inventory, countBefore, callback, maxWaitMs)
-    maxWaitMs = maxWaitMs or 1500
+    maxWaitMs = maxWaitMs or 500
     local elapsed = 0
     local function check()
         local current = #inventory:GetItems()
