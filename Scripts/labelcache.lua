@@ -1,13 +1,19 @@
 -- labelcache.lua — host-side locker label cache for global-pull routing.
 -- Registry: inventoryId -> { label = rawString, pos = {X,Y,Z} }. Presence = "known".
 --
--- Phase 1 (host capture): primed from currently-loaded lockers, then kept fresh as lockers stream
--- in (a gthread-paced batch pump -- NEVER the expensive label read synchronously in the per-actor
--- BeginPlay hook; that is the autolabel dispatch trap, reference_hot_hook_dispatch_cost) and on
--- rename (ServerSetPlayerText, the server-authoritative setter that fires on the host for host AND
--- client renames). Cleared on map load. Phase 2 persists to disk; Phase 4 syncs to clients.
--- Routing reads via labelcache.get. `pos` is captured for a future id-reuse guard (reject a recycled
--- inventoryId whose live position no longer matches the captured one) -- NOT yet enforced by any scan.
+-- Host capture: primed from currently-loaded lockers, then kept fresh as lockers stream in (a
+-- gthread-paced batch pump -- NEVER the expensive label read synchronously in the per-actor BeginPlay
+-- hook; that is the autolabel dispatch trap, reference_hot_hook_dispatch_cost) and on rename
+-- (ServerSetPlayerText, the server-authoritative setter that fires on the host for host AND client
+-- renames). Cleared on map load, then re-primed AND seeded from disk.
+--
+-- DISK PERSISTENCE (host / single-player only): the registry is persisted per-save so far-base lockers
+-- stay KNOWN across sessions. Without it, a host spawned away from base can't route to base lockers
+-- (not loaded -> not cached) and items scatter to a nearby locker by type-count. Keyed by the save
+-- GUID; seeded on world-load (LIVE capture always wins over the persisted snapshot); debounced atomic
+-- writes. Clients do not persist (they don't route via this cache). invIds are assumed stable across a
+-- reload of the same save; a far persisted locker is re-validated live by isDepositTarget at routing
+-- time and overwritten with live data the moment it loads. `pos` is stored for a future id-reuse guard.
 
 local UEHelpers = require("UEHelpers")
 local utils = require("utils")
@@ -18,10 +24,74 @@ local _registry = {}              -- invId -> { label, pos }
 local _queue = {}                 -- ring of locker actors awaiting capture (head/tail, O(1))
 local _qHead, _qTail = 1, 0
 
+-- ===== Disk persistence state =====
+local _persistKey = nil           -- per-save file key; nil disables persistence
+local _isHost = false             -- resolved at loadPersisted (HasAuthority); only host/SP persists
+local _dirty, _writeScheduled = false, false
+
 function labelcache.reset()
     _registry = {}
     _queue = {}
     _qHead, _qTail = 1, 0
+    -- Disable persistence until loadPersisted re-resolves, so a write during the reset->reload window
+    -- can't overwrite a save's file with an empty registry.
+    _isHost, _persistKey, _dirty = false, nil, false
+end
+
+-- ===== Persistence helpers =====
+local function saveKey()
+    local save = FindFirstOf("UWESaveGame")
+    if not save then return nil end
+    local key = nil
+    pcall(function()
+        local sid = save.MetaData.SaveId  -- FGuid; format is deterministic per save (verified 2026-06-23)
+        key = string.format("%08X%08X%08X%08X", sid.A, sid.B, sid.C, sid.D)
+    end)
+    return key
+end
+
+local function isAuthority()
+    local pc = UEHelpers:GetPlayerController()
+    if not pc or not pc:IsValid() then return false end
+    local ok, auth = pcall(function() return pc:HasAuthority() end)
+    return ok and auth == true
+end
+
+local function persistPath()
+    if not _persistKey then return nil end
+    local modDir = debug.getinfo(1, "S").source:match("@(.*/)")
+    return modDir and (modDir .. "../labelcache_" .. _persistKey .. ".txt") or nil
+end
+
+-- File: line 1 "v1"; then one "invId|x|y|z|label" per locker (label LAST so it may contain '|').
+local function writeToDisk()
+    if not _isHost then return end
+    local path = persistPath()
+    if not path then return end
+    local lines = { "v1" }
+    for id, e in pairs(_registry) do
+        local p = e.pos or {}
+        local label = (e.label or ""):gsub("[\r\n]", " ")
+        lines[#lines + 1] = string.format("%d|%.1f|%.1f|%.1f|%s", id, p.X or 0, p.Y or 0, p.Z or 0, label)
+    end
+    local f = io.open(path .. ".tmp", "w")
+    if not f then return end
+    f:write(table.concat(lines, "\n"))
+    f:close()
+    os.remove(path)                 -- Windows: os.rename won't overwrite an existing file
+    os.rename(path .. ".tmp", path)
+end
+
+-- Debounced write: one write ~5s after the first change in a batch (gthread, never ExecuteWithDelay).
+local function markDirty()
+    if not _isHost or not _persistKey then return end
+    _dirty = true
+    if _writeScheduled then return end
+    _writeScheduled = true
+    gthread.defer(5000, function()
+        _writeScheduled = false
+        if _dirty then _dirty = false; pcall(writeToDisk) end
+    end)
 end
 
 --- Routing lookup: { label, pos } or nil (unknown).
@@ -36,11 +106,8 @@ function labelcache.count()
 end
 
 --- Snapshot of known inventory ids, ascending. Global-pull scans iterate THIS (the lockers we
---- actually know about) instead of 1..8192 — the fail-closed domain IS the cache. Before this,
---- the restock + overflow scans each ran isDepositTarget (subsystem calls) across all 8192 ids
---- just to discard the unknown ones, which dominated the per-press cost (~90ms). Iterating the
---- ~few dozen known ids drops that to a handful of isDepositTarget calls. Read-only snapshot;
---- safe to hold across a scan (ascending order preserves the old 1..N tie-break order).
+--- actually know about) instead of 1..8192 — the fail-closed domain IS the cache. Read-only snapshot;
+--- ascending order preserves the old 1..N tie-break order.
 function labelcache.knownIds()
     local ids = {}
     for id in pairs(_registry) do ids[#ids + 1] = id end
@@ -59,6 +126,7 @@ local function captureActor(actor)
         local loc = actor:K2_GetActorLocation()
         _registry[id] = { label = label, pos = { X = loc.X, Y = loc.Y, Z = loc.Z } }
     end)
+    markDirty()
 end
 
 --- Enqueue a streamed-in locker for capture. Trivial — called from the BeginPlay hook; the
@@ -84,23 +152,45 @@ LoopInGameThreadWithDelay(50, function()
 end)
 
 --- Enqueue every currently-loaded locker for (batch-pumped) capture. FindAllOf reads the LIVE world,
---- so this is safe to run on every world load and is inherently warm-reload / double-fire safe -- it
---- re-admits warm actors that never re-fire BeginPlay, and a later call just re-reads the world.
+--- so this is safe to run on every world load and is inherently warm-reload / double-fire safe.
 function labelcache.primeFromLoaded()
     local lockers = FindAllOf("SN2Locker")
     if lockers then for _, a in ipairs(lockers) do labelcache.enqueueLocker(a) end end
 end
 
---- Re-read LIVE labels of all currently-loaded lockers (tens of actors) straight into the registry.
---- Called once per quickstack press (infinite range) BEFORE the global scans, so loaded lockers
---- always route on their live label -- the event-driven cache alone goes stale on MP clients (the
---- ServerSetPlayerText rename hook fires on the host only) and is empty after a warm reload (no
---- BeginPlay re-fire). Far / unloaded lockers keep their captured snapshot. This is the cheap
---- restoration of the pre-cache per-press harvest, scoped to the loaded set.
+--- Re-read LIVE labels of all currently-loaded lockers straight into the registry. Called once per
+--- quickstack press (infinite range) BEFORE the global scans, so loaded lockers always route on their
+--- live label. Far / unloaded lockers keep their captured (or persisted) snapshot.
 function labelcache.refreshLoaded()
     local lockers = utils.getLoadedActors("SN2Locker")
     if not lockers then return end
     for _, a in ipairs(lockers) do captureActor(a) end
+end
+
+--- Seed the registry from the per-save disk file (host/SP only). Fills gaps only -- a live capture
+--- always wins over the persisted snapshot. Also resolves the host/SP gate + per-save key that gate
+--- subsequent writes. No-op on clients / at the main menu / when no file exists.
+function labelcache.loadPersisted()
+    _isHost = isAuthority()
+    if not _isHost then _persistKey = nil; return end
+    _persistKey = saveKey()
+    local path = persistPath()
+    local f = path and io.open(path, "r")
+    if not f then return end
+    local count = 0
+    if f:read("*l") == "v1" then
+        for line in f:lines() do
+            local id, x, y, z, label = line:match("^(%d+)|([%-%d.]+)|([%-%d.]+)|([%-%d.]+)|(.*)$")
+            id = tonumber(id)
+            if id and not _registry[id] then
+                _registry[id] = { label = label or "",
+                    pos = { X = tonumber(x) or 0, Y = tonumber(y) or 0, Z = tonumber(z) or 0 } }
+                count = count + 1
+            end
+        end
+    end
+    f:close()
+    print(string.format("[QuickStack] labelcache: seeded %d persisted locker(s)\n", count))
 end
 
 -- Rename capture (low-frequency, host-authoritative).
@@ -113,11 +203,15 @@ RegisterHook("/Script/UWEUserGeneratedContent.UWEUGCComponent:ServerSetPlayerTex
         end)
     end)
 
--- Prime shortly after EVERY world load (not just mod load): the map-load hook resets the registry,
--- so without a re-prime the cache stays empty after a warm quit-to-menu reload (only ~8 actors
--- re-fire BeginPlay) or the documented LoadMapPostHook double-fire. Mirrors utils.primeAllSoon.
+-- Shortly after EVERY world load (not just mod load): seed from disk, then re-prime from the live world.
+-- loadPersisted runs FIRST (fills gaps) so the batch pump's live captures overwrite loaded lockers with
+-- fresh data while far persisted lockers are retained. The map-load hook resets first, so this also
+-- recovers from a warm quit-to-menu reload / the documented LoadMapPostHook double-fire.
 local function primeSoon()
-    gthread.defer(5000, function() pcall(labelcache.primeFromLoaded) end)
+    gthread.defer(5000, function()
+        pcall(labelcache.loadPersisted)
+        pcall(labelcache.primeFromLoaded)
+    end)
 end
 
 RegisterLoadMapPostHook(function()
