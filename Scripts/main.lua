@@ -599,6 +599,7 @@ local function doQuickStack()
         return
     end
 
+    local _pressClock = os.clock()  -- TEMP QA perf (press -> summary latency)
     local radiusUnits = utils.MetersToUnits(config.Radius)
 
     -- Battery management always runs on quickstack (N key), not tied to restock keybind.
@@ -687,6 +688,7 @@ local function doQuickStack()
 
     -- Function to show results (called after all passes complete)
     local function showResults(totalTransferred, totalContainers, overflowDetails, restockDetails)
+        print(string.format("[QS-PERF] press->summary=%.0fms\n", (os.clock() - _pressClock) * 1000))  -- TEMP QA perf
         local restockCount = 0
         for _ in pairs(restockDetails or {}) do restockCount = restockCount + 1 end
 
