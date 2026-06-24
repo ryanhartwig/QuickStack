@@ -1228,6 +1228,33 @@ network.onMessage("SETLABEL", function(senderPC, payload)
     end
 end)
 
+-- Category labels: host is authoritative. A client requests its categories on each world load
+-- (request-on-join below); the host replies with its serialized category map to that requester only.
+network.onMessage("GET_CATEGORIES", function(senderPC, _)
+    if senderPC then
+        network.sendToClient(senderPC, "CATEGORIES", categorylabels.serialize())
+    end
+end)
+network.onMessage("CATEGORIES", function(_, blob)
+    categorylabels.applyHostBlob(blob)
+end)
+
+-- Client requests the host's categories on each world load (join/rejoin). Host/SP skip -- they use
+-- their own categories.txt directly. gthread settle so the world + PC are ready; one retry covers a
+-- host that wasn't ready yet. The deferred body touches UObjects only after the world is up, never
+-- inside the teardown hook itself.
+RegisterLoadMapPostHook(function()
+    local function requestCategories(attempt)
+        local pc = UEHelpers:GetPlayerController()
+        if not pc or not pc:IsValid() then return end
+        local ok, isHost = pcall(function() return pc:HasAuthority() end)
+        if not ok or isHost then return end  -- host/SP keep their own categories.txt
+        network.sendToHost("GET_CATEGORIES")
+        if attempt < 2 then gthread.defer(8000, function() requestCategories(attempt + 1) end) end
+    end
+    gthread.defer(4000, function() requestCategories(1) end)
+end)
+
 -- Auto-sort on base entry: fires once per outside→inside transition
 -- Always registered (fires ~2-4 times per session), config checked in callback
 do

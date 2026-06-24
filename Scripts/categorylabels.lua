@@ -72,4 +72,27 @@ function categorylabels.count()
     return n
 end
 
+--- Serialize the category map to a wire string (host -> client RPC). One "name=csv" per line. Keys are
+--- already lower-cased and the client applies them verbatim, so casing is irrelevant to routing. Values
+--- never contain a newline (one categories.txt line each); names never contain '=' or newline (guarded
+--- at load), so the line/`=` framing is safe and the RPC payload tolerates the '|'/newline it may carry.
+function categorylabels.serialize()
+    local lines = {}
+    for k, v in pairs(_map) do lines[#lines + 1] = k .. "=" .. v end
+    return table.concat(lines, "\n")
+end
+
+--- Replace the local map with the host's serialized blob (client side). The host is authoritative, so
+--- this overwrites whatever the client loaded from its own categories.txt.
+function categorylabels.applyHostBlob(blob)
+    _map = {}
+    if blob and blob ~= "" then
+        for line in blob:gmatch("[^\n]+") do
+            local k, v = line:match("^([^=]+)=(.*)$")
+            if k and v and k ~= "" then _map[k] = v end
+        end
+    end
+    print(string.format("[QuickStack] categories: applied %d from host\n", categorylabels.count()))
+end
+
 return categorylabels
