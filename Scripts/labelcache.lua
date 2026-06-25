@@ -32,8 +32,14 @@ local _qHead, _qTail = 1, 0
 local _persistKey = nil           -- per-save file key; nil disables persistence
 local _isHost = false             -- resolved at loadPersisted (HasAuthority); only host/SP persists
 local _dirty, _writeScheduled = false, false
--- MP/SP both read HighestInventoryId as 0, so bound the load-time re-resolution scan. A blind scan of
--- 1..1024 (IsInventoryValid + InventoryLocation) is ~3-4ms, one-time, on the +5s post-load defer.
+-- Parsed disk entries kept in memory as the durable truth: { {x,y,z,label,resolved}, ... }. We re-resolve
+-- each to its CURRENT invId by position LAZILY (resolvePersisted) -- the inventory subsystem is NOT yet
+-- populated at the +5s post-load shot (confirmed 2026-06-25: a mid-load scan returns 0 valid), so a single
+-- early attempt loses. Press-time (refreshLoaded) the subsystem is always populated, so resolution there
+-- is reliable and self-healing. _persistRemaining is the count of still-unresolved entries (0 => skip).
+local _persisted, _persistRemaining = {}, 0
+-- MP/SP both read HighestInventoryId as 0, so bound the re-resolution scan. A blind scan of 1..1024
+-- (IsInventoryValid + InventoryLocation) is ~2-4ms; it runs only while entries remain unresolved.
 local PERSIST_SCAN_CAP = 1024
 
 function labelcache.reset()
@@ -43,6 +49,7 @@ function labelcache.reset()
     -- Disable persistence until loadPersisted re-resolves, so a write during the reset->reload window
     -- can't overwrite a save's file with an empty registry.
     _isHost, _persistKey, _dirty = false, nil, false
+    _persisted, _persistRemaining = {}, 0
 end
 
 -- ===== Persistence helpers =====
@@ -70,7 +77,8 @@ local function persistPath()
     return modDir and (modDir .. "../labelcache_" .. _persistKey .. ".txt") or nil
 end
 
--- File: line 1 "v1"; then one "invId|x|y|z|label" per locker (label LAST so it may contain '|').
+-- File: line 1 "v1"; then one "invId|x|y|z|label" per locker (label LAST so it may contain '|'). The
+-- invId is informational only -- it is re-resolved by position on load (ids change across world reloads).
 local function writeToDisk()
     if not _isHost then return end
     local path = persistPath()
@@ -80,6 +88,14 @@ local function writeToDisk()
         local p = e.pos or {}
         local label = (e.label or ""):gsub("[\r\n]", " ")
         lines[#lines + 1] = string.format("%d|%.1f|%.1f|%.1f|%s", id, p.X or 0, p.Y or 0, p.Z or 0, label)
+    end
+    -- Preserve persisted lockers not yet re-resolved this session (their base may not be loaded), so an
+    -- early write -- before resolvePersisted seeds them into _registry -- can't truncate them from the file.
+    for _, e in ipairs(_persisted) do
+        if not e.resolved then
+            lines[#lines + 1] = string.format("0|%.1f|%.1f|%.1f|%s",
+                e.x, e.y, e.z, (e.label or ""):gsub("[\r\n]", " "))
+        end
     end
     local f = io.open(path .. ".tmp", "w")
     if not f then return end
@@ -167,65 +183,82 @@ end
 
 --- Re-read LIVE labels of all currently-loaded lockers straight into the registry. Called once per
 --- quickstack press (infinite range) BEFORE the global scans, so loaded lockers always route on their
---- live label. Far / unloaded lockers keep their captured (or persisted) snapshot.
+--- live label. Also pumps resolvePersisted -- press-time the inventory subsystem is fully populated, so
+--- far persisted lockers reliably re-resolve here (the +5s post-load shot can be too early).
 function labelcache.refreshLoaded()
     local lockers = utils.getLoadedActors("SN2Locker")
-    if not lockers then return end
-    for _, a in ipairs(lockers) do captureActor(a) end
+    if lockers then for _, a in ipairs(lockers) do captureActor(a) end end
+    labelcache.resolvePersisted()
 end
 
---- Seed the registry from the per-save disk file (host/SP only), RE-RESOLVING the current invId for each
---- persisted locker by POSITION. invIds are reassigned on every world reload, so the persisted id is
---- ignored -- we blind-scan the live inventory subsystem, read each valid id's InventoryLocation (works
---- for far/unloaded lockers), and match it to a persisted position. Fills gaps only (live capture wins).
---- Also resolves the host/SP gate + per-save key that gate subsequent writes. No-op on clients / at the
---- main menu / when no file exists.
-function labelcache.loadPersisted()
-    _isHost = isAuthority()
-    if not _isHost then _persistKey = nil; return end
-    _persistKey = saveKey()
-    local path = persistPath()
-    local f = path and io.open(path, "r")
-    if not f then return end
-    -- Parse persisted {pos,label}; the stored invId is STALE across a world reload, so it's discarded.
-    local persisted = {}
-    if f:read("*l") == "v1" then
-        for line in f:lines() do
-            local _id, x, y, z, label = line:match("^(%d+)|([%-%d.]+)|([%-%d.]+)|([%-%d.]+)|(.*)$")
-            x, y, z = tonumber(x), tonumber(y), tonumber(z)
-            if x and y and z then persisted[#persisted + 1] = { x = x, y = y, z = z, label = label or "" } end
-        end
-    end
-    f:close()
-    if #persisted == 0 then return end
-
+--- Re-resolve still-unresolved persisted lockers to their CURRENT invId by POSITION (invIds are reassigned
+--- across world reloads, so the stored id is ignored). Blind-scans the live inventory subsystem, reading
+--- each valid id's InventoryLocation (readable for far/unloaded lockers), and matches it to a persisted
+--- position within 50cm. Seeds gaps only -- a live capture always wins; an entry whose position already
+--- matches a known live locker is marked resolved without overwrite. Cheap early-out when nothing is
+--- pending. Called on load AND before each infinite-range press; never a background poll.
+function labelcache.resolvePersisted()
+    if not _isHost or _persistRemaining == 0 then return end
     local ss = FindFirstOf("UWEInventorySubsystem")
     if not ss then return end
-    local TOL2 = 50 * 50            -- 50cm tolerance² (same locker matches within <1cm; nearest lockers ~>1m apart)
-    local count = 0
+    local TOL2 = 50 * 50            -- 50cm² (same locker matches <1cm; nearest lockers are ~>1m apart)
+    local before = _persistRemaining
     for id = 1, PERSIST_SCAN_CAP do
-        if not _registry[id] then   -- a live capture already owns this id -> leave it
-            local px, py, pz
-            pcall(function()
-                if ss:IsInventoryValid(id) then
-                    local loc = ss:GetStorageContainerForInventory(id).InventoryLocation
-                    px, py, pz = loc.X, loc.Y, loc.Z
-                end
-            end)
-            if px then
-                for _, e in ipairs(persisted) do
+        if _persistRemaining == 0 then break end
+        local px, py, pz
+        pcall(function()
+            if ss:IsInventoryValid(id) then
+                local loc = ss:GetStorageContainerForInventory(id).InventoryLocation
+                px, py, pz = loc.X, loc.Y, loc.Z
+            end
+        end)
+        if px then
+            for _, e in ipairs(_persisted) do
+                if not e.resolved then
                     local dx, dy, dz = px - e.x, py - e.y, pz - e.z
                     if dx * dx + dy * dy + dz * dz < TOL2 then
-                        _registry[id] = { label = e.label, pos = { X = px, Y = py, Z = pz } }
-                        count = count + 1
+                        e.resolved = true
+                        _persistRemaining = _persistRemaining - 1
+                        if not _registry[id] then  -- live capture wins; else just mark accounted-for
+                            _registry[id] = { label = e.label, pos = { X = px, Y = py, Z = pz } }
+                        end
                         break
                     end
                 end
             end
         end
     end
-    print(string.format("[QuickStack] labelcache: re-resolved %d/%d persisted locker(s) by position\n",
-        count, #persisted))
+    if _persistRemaining ~= before then
+        print(string.format("[QuickStack] labelcache: re-resolved %d persisted locker(s) by position (%d remaining)\n",
+            before - _persistRemaining, _persistRemaining))
+    end
+end
+
+--- Load the per-save disk file into the in-memory _persisted list (host/SP only) and attempt a first
+--- position re-resolution. The subsystem is often not populated at the +5s post-load shot, so any entries
+--- that don't resolve now are retried lazily by resolvePersisted on each press. Also resolves the host/SP
+--- gate + per-save key that gate subsequent writes. No-op on clients / at the main menu / when no file.
+function labelcache.loadPersisted()
+    _isHost = isAuthority()
+    if not _isHost then _persistKey = nil; return end
+    _persistKey = saveKey()
+    _persisted, _persistRemaining = {}, 0
+    local path = persistPath()
+    local f = path and io.open(path, "r")
+    if not f then return end
+    -- Parse persisted {pos,label}; the stored invId is discarded (re-resolved by position).
+    if f:read("*l") == "v1" then
+        for line in f:lines() do
+            local _id, x, y, z, label = line:match("^(%d+)|([%-%d.]+)|([%-%d.]+)|([%-%d.]+)|(.*)$")
+            x, y, z = tonumber(x), tonumber(y), tonumber(z)
+            if x and y and z then
+                _persisted[#_persisted + 1] = { x = x, y = y, z = z, label = label or "", resolved = false }
+            end
+        end
+    end
+    f:close()
+    _persistRemaining = #_persisted
+    labelcache.resolvePersisted()   -- best-effort first pass; press-time retries cover the load race
 end
 
 -- Rename capture (low-frequency, host-authoritative).
