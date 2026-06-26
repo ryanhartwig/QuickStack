@@ -262,11 +262,15 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
                 movedCount = movedCount + 1
                 movedIds[item.itemId] = true
                 containersUsed[bestIdx] = true
-                -- Count a NEW slot only when the type wasn't already present (same-type
-                -- moves usually merge into the existing stack — no new slot consumed).
-                local hadType = (typeData[bestIdx][item.typeName] or 0) > 0
+                -- Count EVERY moved item as a slot, matching the nearby path (transferToLockers / the
+                -- overflow-sort pass both do +1 per move). A locker fills after maxItems items and the
+                -- next item rolls to the next matching locker, so ALL matching lockers are exhausted
+                -- before overflow. The old "same-type merges don't add a slot" optimization meant a
+                -- single-type locker (e.g. all-gold) never reached full in the model -> it was picked
+                -- for every item, real moves then failed once it was physically full, and items spilled
+                -- to overflow while a second matching locker sat empty (regression vs v4).
                 typeData[bestIdx][item.typeName] = (typeData[bestIdx][item.typeName] or 0) + item.count
-                if not hadType then itemCount[bestIdx] = itemCount[bestIdx] + 1 end
+                itemCount[bestIdx] = itemCount[bestIdx] + 1
                 utils.recordDetail(transferDetails, item.typeName, item.itemType, item.displayName,
                     labels[bestIdx] or "Unlabeled")
             end
