@@ -42,6 +42,19 @@ local _persisted, _persistRemaining = {}, 0
 -- (IsInventoryValid + InventoryLocation) is ~2-4ms; it runs only while entries remain unresolved.
 local PERSIST_SCAN_CAP = 1024
 
+-- Persistence lives OUTSIDE the mod folder, at <ue4ss>/QuickStack/ (a sibling of Mods/, matching the
+-- Terraformer data-dir convention), so per-save caches survive a folder-delete reinstall on update.
+-- scriptDir is .../Mods/QuickStack/Scripts/ -> ../../../QuickStack/ == <ue4ss>/QuickStack/.
+local DATA_DIR = (debug.getinfo(1, "S").source:match("@(.*/)") or "") .. "../../../QuickStack/"
+local _dirReady = false
+-- Created lazily (only the host writes, only when there's something to persist) so clients / the main
+-- menu never spawn the dir, and the os.execute mkdir runs once per host session rather than per load.
+local function ensureDataDir()
+    if _dirReady then return end
+    pcall(function() os.execute('mkdir "' .. DATA_DIR:gsub("/", "\\") .. '" 2>nul') end)
+    _dirReady = true
+end
+
 function labelcache.reset()
     _registry = {}
     _queue = {}
@@ -73,8 +86,7 @@ end
 
 local function persistPath()
     if not _persistKey then return nil end
-    local modDir = debug.getinfo(1, "S").source:match("@(.*/)")
-    return modDir and (modDir .. "../labelcache_" .. _persistKey .. ".txt") or nil
+    return DATA_DIR .. "labelcache_" .. _persistKey .. ".txt"
 end
 
 -- File: line 1 "v1"; then one "invId|x|y|z|label" per locker (label LAST so it may contain '|'). The
@@ -83,6 +95,7 @@ local function writeToDisk()
     if not _isHost then return end
     local path = persistPath()
     if not path then return end
+    ensureDataDir()                 -- create <ue4ss>/QuickStack/ on first host write
     local lines = { "v1" }
     for id, e in pairs(_registry) do
         local p = e.pos or {}
