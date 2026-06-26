@@ -687,7 +687,12 @@ local function doQuickStack()
 
         local batteryActivity = batteryStashCount + batteryPullCount
 
-        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
+        if totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 and someFull then
+            -- Items DID match a container, but every match was full -- distinct from "no matching
+            -- container" and "nothing to stack". Without this, a full destination reads as "Nothing to
+            -- stack", which wrongly implies no items / no matching locker (user report 2026-06-25).
+            utils.Notify(L("containers_full"), config)
+        elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 and #nearbyLockers == 0 and #overflowLockers == 0 then
             utils.Notify(L("no_match"), config)
         elseif totalTransferred == 0 and swapCount == 0 and restockCount == 0 and batteryActivity == 0 and tadpoleMoved == 0 then
             utils.Notify(L("nothing_to_stack"), config)

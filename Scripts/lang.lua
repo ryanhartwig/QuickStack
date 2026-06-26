@@ -57,6 +57,7 @@ strings.en = {
     -- Status / error messages
     no_match              = "No matching containers nearby",
     no_match_full         = "No matching containers nearby (some full)",
+    containers_full       = "Matching container(s) full",
     nothing_to_stack      = "Nothing to stack",
     nothing_to_restock    = "Nothing to restock",
     battery_stashed       = function(n) return string.format("Stashed %d %s", n, plural(n, "battery", "batteries")) end,
@@ -169,6 +170,7 @@ strings.zh = {
     -- Status / error messages
     no_match              = "附近没有匹配的容器",
     no_match_full         = "附近没有匹配的容器（有些已满）",
+    containers_full       = "匹配的容器已满",
     nothing_to_stack      = "没有可堆叠的物品",
     nothing_to_restock    = "没有可补充的物品",
     battery_stashed       = function(n) return string.format("存入 %d 个电池", n) end,
@@ -281,6 +283,7 @@ strings.de = {
     -- Status / error messages
     no_match              = "Keine passenden Behälter in der Nähe",
     no_match_full         = "Keine passenden Behälter in der Nähe (einige voll)",
+    containers_full       = "Passende Behälter voll",
     nothing_to_stack      = "Nichts zu verstauen",
     nothing_to_restock    = "Nichts zum Auffüllen",
     battery_stashed       = function(n) return string.format("%d %s eingelagert", n, plural(n, "Batterie", "Batterien")) end,
@@ -397,6 +400,7 @@ strings.es = {
     -- Status / error messages
     no_match              = "No hay contenedores compatibles cerca",
     no_match_full         = "No hay contenedores compatibles cerca (algunos llenos)",
+    containers_full       = "Contenedores compatibles llenos",
     nothing_to_stack      = "Nada que apilar",
     nothing_to_restock    = "Nada que reabastecer",
     battery_stashed       = function(n) return string.format("%d %s guardadas", n, plural(n, "batería", "baterías")) end,
@@ -513,6 +517,7 @@ strings.fr = {
     -- Status / error messages
     no_match              = "Aucun conteneur correspondant à proximité",
     no_match_full         = "Aucun conteneur correspondant à proximité (certains pleins)",
+    containers_full       = "Conteneurs correspondants pleins",
     nothing_to_stack      = "Rien à empiler",
     nothing_to_restock    = "Rien à réapprovisionner",
     battery_stashed       = function(n) return string.format("%d %s rangées", n, plural(n, "batterie", "batteries")) end,
@@ -629,6 +634,7 @@ strings.it = {
     -- Status / error messages
     no_match              = "Nessun contenitore compatibile nelle vicinanze",
     no_match_full         = "Nessun contenitore compatibile nelle vicinanze (alcuni pieni)",
+    containers_full       = "Contenitori compatibili pieni",
     nothing_to_stack      = "Niente da impilare",
     nothing_to_restock    = "Niente da rifornire",
     battery_stashed       = function(n) return string.format("%d %s riposte", n, plural(n, "batteria", "batterie")) end,
@@ -737,6 +743,7 @@ strings.ja = {
     -- Status / error messages
     no_match              = "近くに一致するコンテナがありません",
     no_match_full         = "近くに一致するコンテナがありません（一部満杯）",
+    containers_full       = "一致するコンテナが満杯です",
     nothing_to_stack      = "収納するものがありません",
     nothing_to_restock    = "補充するものがありません",
     battery_stashed       = function(n) return string.format("バッテリー%d個を格納", n) end,
@@ -845,6 +852,7 @@ strings.ko = {
     -- Status / error messages
     no_match              = "근처에 일치하는 컨테이너 없음",
     no_match_full         = "근처에 일치하는 컨테이너 없음 (일부 가득 참)",
+    containers_full       = "일치하는 컨테이너가 가득 참",
     nothing_to_stack      = "수납할 항목 없음",
     nothing_to_restock    = "보충할 항목 없음",
     battery_stashed       = function(n) return string.format("배터리 %d개 보관", n) end,
@@ -961,6 +969,7 @@ strings.pt = {
     -- Status / error messages
     no_match              = "Nenhum contêiner compatível por perto",
     no_match_full         = "Nenhum contêiner compatível por perto (alguns cheios)",
+    containers_full       = "Contêineres compatíveis cheios",
     nothing_to_stack      = "Nada para empilhar",
     nothing_to_restock    = "Nada para reabastecer",
     battery_stashed       = function(n) return string.format("%d %s guardadas", n, plural(n, "bateria", "baterias")) end,
@@ -1077,6 +1086,7 @@ strings.ru = {
     -- Status / error messages
     no_match              = "Рядом нет подходящих контейнеров",
     no_match_full         = "Рядом нет подходящих контейнеров (некоторые полны)",
+    containers_full       = "Подходящие контейнеры полны",
     nothing_to_stack      = "Нечего складывать",
     nothing_to_restock    = "Нечего пополнять",
     battery_stashed       = function(n) return string.format("Убрано %d %s", n, plural_slavic(n, "батарея", "батареи", "батарей")) end,
@@ -1193,6 +1203,7 @@ strings.uk = {
     -- Status / error messages
     no_match              = "Поблизу немає відповідних контейнерів",
     no_match_full         = "Поблизу немає відповідних контейнерів (деякі повні)",
+    containers_full       = "Відповідні контейнери повні",
     nothing_to_stack      = "Немає чого складати",
     nothing_to_restock    = "Немає чого поповнювати",
     battery_stashed       = function(n) return string.format("Сховано %d %s", n, plural_slavic(n, "батарею", "батареї", "батарей")) end,
