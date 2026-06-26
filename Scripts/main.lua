@@ -30,7 +30,7 @@ globalpull.init(config)
 utils.setLockerStreamInHandler(labelcache.enqueueLocker)
 categorylabels.load()
 
-local VERSION = "4.2.0-dev"
+local VERSION = "5.0.0"
 print(string.format("[QuickStack] v%s loaded\n", VERSION))
 
 -- Write SN2ModSettings manifest if the mod is installed (optional integration)
