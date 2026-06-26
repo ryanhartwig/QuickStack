@@ -1,8 +1,8 @@
-# QuickStack -- Category Labels
+# QuickStack Category Labels
 #
 # Define a CATEGORY NAME = a comma-separated list of item-name fragments.
 # Then label any locker with a category name (e.g. "Components") and QuickStack routes every item in
-# that category into it -- exactly as if you had typed the whole list as the locker's label.
+# that category into it. Works exactly as if you had typed the whole list as the locker's label.
 #
 # Rules:
 #   - One category per line:  Category Name = fragment, fragment, fragment
@@ -10,12 +10,12 @@
 #   - Fragments match item names the same way normal locker labels do (case-insensitive prefix match,
 #     so "adv wiring" matches "Advanced Wiring Kit").
 #   - Lines starting with # are comments; blank lines are ignored.
-#   - You can mix categories and normal text in a locker label, e.g.  "%Components, spare parts".
+#   - You can mix categories and normal text in a locker label, e.g.  "Components, titanium".
 #
-# Multiplayer: the HOST's categories.txt is authoritative -- clients automatically use the host's
+# Multiplayer: the HOST's categories.txt is authoritative. Clients automatically use the host's
 # categories, so you only need to edit this file on the host (or in single-player).
 #
-# The examples below are a starting point -- edit them to match how you organize your base.
+# The examples below are a starting point to show proper formatting. Edit them to match how you organize your base.
 
-Components = adv wiring kit, wiring kit, sys chip, glass, fib mesh, silicone, lubricant
-Ingots = titanium ingot, plasteel ingot
+Electronics = adv wiring kit, wiring kit, sys chip
+Metals = gold, silv, lead
