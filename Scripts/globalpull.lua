@@ -168,11 +168,18 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
 
     local playerInvId = playerInv.InventoryId
 
-    -- Enumerate gated targets and snapshot each (type-count + capacity + routing label).
+    -- Player position for proximity tie-breaking (one read; nil-safe -> ties fall back to id order).
+    local px, py, pz
+    pcall(function()
+        local pawn = utils.GetPlayerPawn()
+        if pawn then local l = pawn:K2_GetActorLocation(); px, py, pz = l.X, l.Y, l.Z end
+    end)
+
+    -- Enumerate gated targets and snapshot each (type-count + capacity + routing label + distance).
     -- FAIL-CLOSED: candidates come ONLY from the labelcache (lockers whose label we KNOW:
     -- captured while loaded this session / synced / persisted). Iterating knownIds (not 1..8192)
     -- is also the per-press cost win — we never isDepositTarget an unknown id we'd just skip.
-    local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
+    local targetIds, typeData, itemCount, maxItems, labels, dist = {}, {}, {}, {}, {}, {}
     for _, id in ipairs(labelcache.knownIds()) do
         local entry = labelcache.get(id)
         if isDepositTarget(ss, id, playerInvId, lockerClass, true) then  -- knownIds => cache-known locker
@@ -181,6 +188,11 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
                 local idx = #targetIds + 1
                 targetIds[idx] = id
                 labels[idx] = routing  -- string or nil
+                dist[idx] = math.huge  -- distance² to player; math.huge when position unknown
+                if px and entry.pos then
+                    local dx, dy, dz = (entry.pos.X or 0) - px, (entry.pos.Y or 0) - py, (entry.pos.Z or 0) - pz
+                    dist[idx] = dx * dx + dy * dy + dz * dz
+                end
                 typeData[idx] = {}
                 itemCount[idx] = 0
                 maxItems[idx] = DEFAULT_MAX_ITEMS
@@ -207,8 +219,8 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     local movedCount = 0
     local movedIds = {}  -- itemIds confirmed-moved this pass; the overflow pass excludes them (client-lag-proof)
     for _, item in ipairs(transferableItems) do
-        local bestLabelScore, bestLabelIdx = 0, nil
-        local bestUnlabeledIdx, bestUnlabeledCount = nil, 0
+        local bestLabelScore, bestLabelIdx, bestLabelDist = 0, nil, math.huge
+        local bestUnlabeledIdx, bestUnlabeledCount, bestUnlabeledDist = nil, 0, math.huge
         -- Tokenize the item name ONCE, not per labeled target (the target set is map-wide).
         local nameWords, totalChars = matching.tokenizeName(item.displayName)
 
@@ -225,14 +237,20 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
                 -- not for unrelated full lockers elsewhere on the map.
                 if labelScore > 0 or typeCount > 0 then someFull = true end
             elseif labelScore > 0 then
-                if labelScore > bestLabelScore then
+                -- Match quality wins; an EXACT score tie breaks by proximity (nearest to the player),
+                -- so a same-label locker you're standing next to beats an identical one 1000m away.
+                if labelScore > bestLabelScore
+                    or (labelScore == bestLabelScore and dist[i] < bestLabelDist) then
                     bestLabelScore = labelScore
                     bestLabelIdx = i
+                    bestLabelDist = dist[i]
                 end
             elseif typeCount > 0 then
-                if typeCount > bestUnlabeledCount then
+                if typeCount > bestUnlabeledCount
+                    or (typeCount == bestUnlabeledCount and dist[i] < bestUnlabeledDist) then
                     bestUnlabeledCount = typeCount
                     bestUnlabeledIdx = i
+                    bestUnlabeledDist = dist[i]
                 end
             end
         end
