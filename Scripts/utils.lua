@@ -56,6 +56,32 @@ function utils.GetPlayerPawn()
     return nil
 end
 
+--- Get the LIVE local player controller. UEHelpers:GetPlayerController() caches its result and, after an
+--- exit-to-menu world reload, keeps returning the DESTROYED world's controller -- the stale PC still
+--- reports IsValid(), so its refetch never fires. Creating a UMG widget with that stale PC yields a dead
+--- UserWidget (null WidgetTree -> "Tried setting member variable 'RootWidget'" spam, blank summary panel).
+--- Verified 2026-06-26: stale cached PC -> invalid widget; the live PC -> valid widget + WidgetTree.
+--- Derived from the cached, IsValid-validated pawn (GetPlayerPawn) -> the current possessing PC, ~0.002ms.
+--- Deliberately NOT a fresh FindAllOf("PlayerController") scan: that walks the whole object array (~11ms)
+--- and would stutter the per-press UI path. Cold-scan fallback only if the pawn has no controller yet.
+---@return userdata|nil The local player controller, or nil if not found
+function utils.GetPlayerController()
+    local pawn = utils.GetPlayerPawn()  -- cached + IsValid-validated -> current possessing PC, ~free
+    if pawn then
+        local ok, ctrl = pcall(function() return pawn.Controller end)
+        if ok and ctrl and ctrl:IsValid() then return ctrl end
+    end
+    -- Cold fallback: scan live PlayerControllers for the local one (rare; ~11ms one-off).
+    local allPCs = FindAllOf("PlayerController")
+    if allPCs then
+        for _, pc in ipairs(allPCs) do
+            local ok, isLocal = pcall(function() return pc:IsValid() and pc:IsLocalPlayerController() end)
+            if ok and isLocal then return pc end
+        end
+    end
+    return nil
+end
+
 --- Show a notification message to the player using the game's toast system
 ---@param message string The message to display
 ---@param config table The mod config (needs config.Notify)

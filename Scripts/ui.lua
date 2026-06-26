@@ -2,6 +2,7 @@
 --- Handles the visual panel showing transfer results with animations
 
 local UEHelpers = require("UEHelpers")
+local utils = require("utils")
 local gthread = require("gthread")
 
 local ui = {}
@@ -46,14 +47,20 @@ function ui.showTransferSummary(transferDetails, overflowDetails, restockDetails
         activeSummaryPanel = nil
     end
 
-    local pc = UEHelpers:GetPlayerController()
+    -- utils.GetPlayerController (NOT UEHelpers): UEHelpers caches a stale, destroyed-world PC after an
+    -- exit-to-menu reload, and Create() with it yields a dead widget (null WidgetTree -> RootWidget error).
+    local pc = utils.GetPlayerController()
     local wbLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
     local uwClass = StaticFindObject("/Script/UMG.UserWidget")
     if not pc or not wbLib or not uwClass then return end
 
     local root = nil
     pcall(function() root = wbLib:Create(pc, uwClass, pc) end)
-    if not root then return end
+    -- Validity guard (not just nil): a stale PC produces a non-nil but INVALID widget with a null
+    -- WidgetTree; bail cleanly instead of spamming "Tried setting member variable 'RootWidget'".
+    local rootOk = false
+    pcall(function() rootOk = root and root:IsValid() and root.WidgetTree and root.WidgetTree:IsValid() end)
+    if not rootOk then return end
 
     local canvasCls = StaticFindObject("/Script/UMG.CanvasPanel")
     local vboxCls = StaticFindObject("/Script/UMG.VerticalBox")
