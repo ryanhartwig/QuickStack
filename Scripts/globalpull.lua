@@ -86,13 +86,23 @@ end
 --- player/equipment inventories are pawn components never registered as storage actors, and
 --- loot/vehicle/beacon classes don't subclass SN2Locker. This is what keeps items out of
 --- loot crates and other players' packs.
-local function isDepositTarget(ss, id, playerInvId, lockerClass)
+local function isDepositTarget(ss, id, playerInvId, lockerClass, cacheKnown)
     if id == playerInvId then return false end
     local ok, valid = pcall(function() return ss:IsInventoryValid(id) end)
     if not ok or not valid then return false end
     local cls = nil
     pcall(function() cls = ss:GetActorClassForInventory(id) end)
-    if not cls or not cls:IsValid() then return false end
+    if not cls or not cls:IsValid() then
+        -- Class UNRESOLVABLE -> a far locker whose actor has never loaded this session. Verified
+        -- 2026-06-25: after a cold/menu reload neither GetActorClassForInventory NOR the storage
+        -- container's InventoryClass resolves for never-loaded lockers (only ~1/67 far ids did), so the
+        -- class gate can't see them and persisted far routing silently dropped to 3 targets. But the
+        -- labelcache ONLY ever captures SN2Locker actors (FindAllOf("SN2Locker") / the SN2Locker-filtered
+        -- BeginPlay hook / a rename on a locker), so a cached id IS a known locker -> trust it. The
+        -- server-authoritative MoveInventoryItem is the final backstop: a wrong/reused id just fails the
+        -- move, never mis-deposits. cacheKnown is passed true only by knownIds-driven callers.
+        return cacheKnown == true
+    end
     local okN, name = pcall(function() return cls:GetFName():ToString() end)
     if okN and LOOT_DENY[name] then return false end  -- explicit loot exclusion
     local isLocker = false
@@ -165,7 +175,7 @@ function globalpull.stack(playerInv, transferableItems, totalItemsBefore)
     local targetIds, typeData, itemCount, maxItems, labels = {}, {}, {}, {}, {}
     for _, id in ipairs(labelcache.knownIds()) do
         local entry = labelcache.get(id)
-        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+        if isDepositTarget(ss, id, playerInvId, lockerClass, true) then  -- knownIds => cache-known locker
             local routing = parseRoutingLabel(entry.label)
             if routing ~= "skip" then
                 local idx = #targetIds + 1
@@ -278,7 +288,7 @@ function globalpull.buildRestockCandidates()
     -- loaded (~150m) lockers until label-sync Phase 4 syncs the host registry -- far lockers are
     -- skipped (fail-closed: a reach reduction, never a mis-route). Skips the 8192-id sweep either way.
     for _, id in ipairs(labelcache.knownIds()) do
-        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+        if isDepositTarget(ss, id, playerInvId, lockerClass, true) then  -- knownIds => cache-known locker
             pcall(function()
                 for _, it in ipairs(ss:GetItemsForInventory(id)) do
                     local s = it:get()
@@ -321,7 +331,7 @@ function globalpull.overflowDump(playerInv, remainingItems)
     -- the %o check already required a cache entry, so this is the same set, minus the 8192 sweep.
     local ids, count, maxItems, labels = {}, {}, {}, {}
     for _, id in ipairs(labelcache.knownIds()) do
-        if isDepositTarget(ss, id, playerInvId, lockerClass) then
+        if isDepositTarget(ss, id, playerInvId, lockerClass, true) then  -- knownIds => cache-known locker
             local entry = labelcache.get(id)
             local raw = entry and entry.label
             if raw and raw:sub(1, #config.OverflowPrefix) == config.OverflowPrefix then
